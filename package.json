@@ -1,0 +1,21 @@
+{
+  "name": "dogrunner",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "preview": "vite preview --host",
+    "assets": "node scripts/generate-placeholders.mjs",
+    "dog-atlas": "node scripts/build-dog-atlas.mjs"
+  },
+  "dependencies": {
+    "phaser": "^3.90.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.61.1",
+    "sharp": "^0.35.2",
+    "vite": "^6.3.5"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "Dog Runner",
+  "version": "1.0.0",
+  "engine": "Phaser 3",
+  "resolution": { "width": 480, "height": 800 },
+  "orientation": "portrait",
+  "physics": { "default": "arcade", "gravity": { "y": 500 } },
+  "controls": { "mobile": "tap", "desktop": "space/up" },
+  "assets": {
+    "dog": "assets/dogspritesheet.png",
+    "dogAtlas": "assets/dog-atlas.json",
+    "obstacle": "assets/rock.png",
+    "background": "assets/front.png",
+    "ground": "assets/ground.png"
+  },
+  "scoring": {
+    "base": "distance",
+    "bonus": "bones collected"
+  }
+}
