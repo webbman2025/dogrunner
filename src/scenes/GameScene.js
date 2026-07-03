@@ -150,11 +150,25 @@ const DAY_NIGHT_CYCLE_PERIOD = 2000;
 const DAY_NIGHT_FADE_RANGE = 350;
 const DAY_OVERLAY_LERP_SPEED = 4;
 
+const GHOST_RACE_ENABLED = true;
+const GHOST_STORAGE_KEY = 'dogrunner-ghost-best-v3';
+const GHOST_FORMAT_VERSION = 3;
+const GHOST_HIT_RUN_SCALE = 0.45;
+const GHOST_FADE_MS = 900;
+const GHOST_SAMPLE_INTERVAL_MS = 150;
+const GHOST_ALPHA = 0.5;
+const GHOST_TINT = 0x88ccff;
+const GHOST_X_SHIFT_PER_SCORE = 0.35;
+const GHOST_X_MIN = 40;
+const GHOST_X_MAX = 160;
+const GHOST_DEPTH = -0.5;
+
 export default class GameScene extends Phaser.Scene {
   static devWeather = WEATHER_MODES.DRY;
   static devDay = DAY_MODES.DAY;
   static devDayNightCycle = 'on';
   static devSpeed = 'fast';
+  static devGhostRace = 'on';
 
   constructor() {
     super('GameScene');
@@ -343,6 +357,11 @@ export default class GameScene extends Phaser.Scene {
     }
 
     const now = this.time.now;
+    this.ghostRunStartTime = now;
+    this.lastGhostSampleTime = 0;
+    this.ghostRunSamples = [];
+    this.resetGhostFadeState();
+    this.ghostLastHearts = MAX_HEARTS;
     this.nextRockTime = now + Phaser.Math.Between(ROCK_SPAWN_INITIAL_MIN_MS, ROCK_SPAWN_INITIAL_MAX_MS);
     this.nextMudTime = now + Phaser.Math.Between(2000, 3500);
     this.physics.resume();
@@ -527,6 +546,372 @@ export default class GameScene extends Phaser.Scene {
     this.dogShadow.setPosition(this.dog.x, GROUND_SURFACE + DOG_SHADOW_Y_OFFSET);
     this.dogShadow.setScale(scale, scale * 0.85);
     this.dogShadow.setAlpha(Phaser.Math.Linear(0.86, 0.14, lift));
+  }
+
+  isGhostRaceActive() {
+    return GHOST_RACE_ENABLED && GameScene.devGhostRace === 'on';
+  }
+
+  shouldShowGhost() {
+    return (
+      this.isGhostRaceActive() &&
+      this.ghostBestAtRunStart?.samples?.length >= 2
+    );
+  }
+
+  loadGhostBest() {
+    if (!GHOST_RACE_ENABLED) {
+      return null;
+    }
+
+    try {
+      const raw = localStorage.getItem(GHOST_STORAGE_KEY);
+      if (!raw) {
+        return null;
+      }
+
+      const data = JSON.parse(raw);
+      if (
+        !data ||
+        data.v !== GHOST_FORMAT_VERSION ||
+        typeof data.finalScore !== 'number' ||
+        !Array.isArray(data.samples) ||
+        data.samples.length < 2 ||
+        typeof data.samples[0].runScale !== 'number' ||
+        typeof data.samples[0].hearts !== 'number'
+      ) {
+        return null;
+      }
+
+      return data;
+    } catch {
+      return null;
+    }
+  }
+
+  saveGhostBest(data) {
+    if (!GHOST_RACE_ENABLED || !data?.samples?.length) {
+      return;
+    }
+
+    try {
+      localStorage.setItem(GHOST_STORAGE_KEY, JSON.stringify(data));
+    } catch {
+      // Ignore quota / private-mode storage errors.
+    }
+  }
+
+  clearGhostBest() {
+    try {
+      localStorage.removeItem(GHOST_STORAGE_KEY);
+      localStorage.removeItem('dogrunner-ghost-best');
+      localStorage.removeItem('dogrunner-ghost-best-v2');
+    } catch {
+      // Ignore storage errors.
+    }
+
+    this.ghostBest = null;
+    this.ghostBestAtRunStart = null;
+    this.ghostDog?.setVisible(false);
+  }
+
+  setGhostRace(enabled) {
+    GameScene.devGhostRace = enabled ? 'on' : 'off';
+    this.refreshDevMenu();
+    this.updateGhostRace(this.time.now);
+  }
+
+  createGhostDog() {
+    this.ghostDog = this.add.sprite(DOG_X, DOG_RUN_GROUND_Y, 'run_0');
+    this.ghostDog.setOrigin(0.5, 1);
+    this.ghostDog.setScale(DOG_SCALE);
+    this.ghostDog.setDepth(GHOST_DEPTH);
+    this.ghostDog.setAlpha(GHOST_ALPHA);
+    this.ghostDog.setTint(GHOST_TINT);
+    this.ghostDog.play('run');
+    this.ghostDog.setVisible(false);
+  }
+
+  recordGhostSample(time, force = false) {
+    if (!this.hasStarted || this.isGameOver) {
+      return;
+    }
+
+    if (!force && time - this.lastGhostSampleTime < GHOST_SAMPLE_INTERVAL_MS) {
+      return;
+    }
+
+    this.lastGhostSampleTime = time;
+    const inMud = this.isDogOnGround() && this.physics.overlap(this.dog, this.mudPatches);
+    const inHit = this.hitCooldownMs > 0;
+    let runScale = inMud ? MUD_SLOW_FACTOR : 1;
+    if (inHit) {
+      runScale *= GHOST_HIT_RUN_SCALE;
+    }
+
+    this.ghostRunSamples.push({
+      t: time - this.ghostRunStartTime,
+      score: Math.floor(this.score),
+      y: this.dog.y,
+      tex: this.dog.texture.key,
+      mud: inMud,
+      runScale,
+      hit: inHit,
+      hearts: this.hearts,
+    });
+  }
+
+  findGhostDeathTime(samples) {
+    if (!samples?.length) {
+      return null;
+    }
+
+    for (const sample of samples) {
+      if (sample.hearts <= 0) {
+        return sample.t;
+      }
+    }
+
+    return null;
+  }
+
+  getGhostHeartsAt(samples, elapsed) {
+    const hearts = this.getGhostHeldValueAt(samples, elapsed, 'hearts');
+    return typeof hearts === 'number' ? hearts : MAX_HEARTS;
+  }
+
+  getGhostHeldValueAt(samples, elapsed, key) {
+    if (!samples?.length) {
+      return key === 'score' ? 0 : null;
+    }
+
+    let value = samples[0][key];
+    for (let i = 0; i < samples.length; i++) {
+      if (samples[i].t <= elapsed) {
+        value = samples[i][key];
+      } else {
+        break;
+      }
+    }
+
+    return value;
+  }
+
+  resetGhostFadeState() {
+    this.ghostFadeStarted = false;
+    this.ghostFadedOut = false;
+    this.ghostLastHearts = MAX_HEARTS;
+    this.tweens.killTweensOf(this.ghostDog);
+    if (this.ghostDog) {
+      this.ghostDog.setAlpha(GHOST_ALPHA);
+      this.ghostDog.setVisible(false);
+    }
+  }
+
+  startGhostFadeOut() {
+    if (!this.ghostDog || this.ghostFadeStarted) {
+      return;
+    }
+
+    this.ghostFadeStarted = true;
+    this.tweens.killTweensOf(this.ghostDog);
+
+    this.tweens.add({
+      targets: this.ghostDog,
+      alpha: 0,
+      duration: GHOST_FADE_MS,
+      ease: 'Quad.easeIn',
+      onComplete: () => {
+        this.ghostFadedOut = true;
+        this.ghostDog?.setVisible(false);
+      },
+    });
+  }
+
+  getGhostValueAt(samples, elapsed, key) {
+    if (!samples?.length) {
+      return key === 'score' ? 0 : null;
+    }
+
+    if (elapsed <= samples[0].t) {
+      return samples[0][key];
+    }
+
+    const last = samples[samples.length - 1];
+    if (elapsed >= last.t) {
+      return last[key];
+    }
+
+    for (let i = 0; i < samples.length - 1; i++) {
+      const a = samples[i];
+      const b = samples[i + 1];
+      if (elapsed >= a.t && elapsed <= b.t) {
+        if (key === 'y' || key === 'runScale') {
+          const t = (elapsed - a.t) / (b.t - a.t);
+          const aVal = a[key] ?? (key === 'runScale' ? 1 : 0);
+          const bVal = b[key] ?? (key === 'runScale' ? 1 : 0);
+          return Phaser.Math.Linear(aVal, bVal, t);
+        }
+
+        if (key === 'hit' || key === 'mud') {
+          return a[key] || b[key];
+        }
+
+        if (key === 'hearts') {
+          return elapsed - a.t < b.t - elapsed ? a[key] : b[key];
+        }
+
+        return elapsed - a.t < b.t - elapsed ? a[key] : b[key];
+      }
+    }
+
+    return last[key];
+  }
+
+  playGhostCollisionBump() {
+    if (!this.ghostDog?.visible) {
+      return;
+    }
+
+    this.tweens.killTweensOf(this.ghostDog);
+    this.ghostDog.setAlpha(GHOST_ALPHA);
+    this.ghostDog.setScale(DOG_SCALE);
+
+    this.tweens.add({
+      targets: this.ghostDog,
+      scaleX: DOG_SCALE * BUMP_SQUASH_X,
+      scaleY: DOG_SCALE * BUMP_SQUASH_Y,
+      duration: 80,
+      yoyo: true,
+      ease: 'Quad.easeOut',
+    });
+
+    this.tweens.add({
+      targets: this.ghostDog,
+      alpha: GHOST_ALPHA * 0.45,
+      duration: 90,
+      yoyo: true,
+      repeat: 2,
+    });
+  }
+
+  updateGhostVisual(tex, runScale = 1) {
+    if (!this.ghostDog) {
+      return;
+    }
+
+    const isJump = tex?.startsWith('jump_');
+
+    if (isJump) {
+      if (this.ghostDog.texture.key !== tex) {
+        this.ghostDog.setTexture(tex);
+      }
+      this.ghostDog.anims.stop();
+      return;
+    }
+
+    if (
+      this.ghostDog.texture.key.startsWith('jump_') ||
+      !this.ghostDog.anims.isPlaying ||
+      this.ghostDog.anims.currentAnim?.key !== 'run'
+    ) {
+      this.ghostDog.play('run', true);
+    }
+
+    this.ghostDog.anims.timeScale = runScale;
+  }
+
+  getGhostPlaybackRunScale(samples, elapsed) {
+    const ghostMud = Boolean(this.getGhostValueAt(samples, elapsed, 'mud'));
+    const ghostHit = Boolean(this.getGhostValueAt(samples, elapsed, 'hit'));
+    let runScale = this.getGhostValueAt(samples, elapsed, 'runScale');
+
+    if (typeof runScale !== 'number') {
+      runScale = ghostMud ? MUD_SLOW_FACTOR : 1;
+    }
+
+    if (ghostMud && runScale > MUD_SLOW_FACTOR) {
+      runScale = MUD_SLOW_FACTOR;
+    }
+
+    if (ghostHit) {
+      runScale = Math.min(runScale, GHOST_HIT_RUN_SCALE);
+    }
+
+    return runScale;
+  }
+
+  updateGhostRace(time) {
+    if (!this.ghostDog) {
+      return;
+    }
+
+    if (!this.shouldShowGhost() || !this.hasStarted || this.isGameOver) {
+      this.ghostDog.setVisible(false);
+      return;
+    }
+
+    const elapsed = time - this.ghostRunStartTime;
+    const samples = this.ghostBestAtRunStart.samples;
+    const deathT = this.ghostBestAtRunStart.deathT;
+    const ghostHearts = this.getGhostHeartsAt(samples, elapsed);
+
+    if (deathT != null && elapsed >= deathT && ghostHearts <= 0) {
+      this.startGhostFadeOut();
+    }
+
+    if (this.ghostFadedOut) {
+      return;
+    }
+
+    if (this.ghostFadeStarted) {
+      return;
+    }
+
+    const ghostScore = this.getGhostHeldValueAt(samples, elapsed, 'score') ?? 0;
+    const ghostY = this.getGhostValueAt(samples, elapsed, 'y') ?? DOG_RUN_GROUND_Y;
+    const ghostTex = this.getGhostHeldValueAt(samples, elapsed, 'tex') ?? 'run_0';
+    const ghostRunScale = this.getGhostPlaybackRunScale(samples, elapsed);
+    const delta = Math.floor(this.score) - ghostScore;
+
+    if (ghostHearts < this.ghostLastHearts) {
+      this.playGhostCollisionBump();
+    }
+    this.ghostLastHearts = ghostHearts;
+
+    this.ghostDog.setVisible(true);
+    this.ghostDog.x = Phaser.Math.Clamp(
+      DOG_X - delta * GHOST_X_SHIFT_PER_SCORE,
+      GHOST_X_MIN,
+      GHOST_X_MAX,
+    );
+    this.ghostDog.y = ghostY;
+    this.updateGhostVisual(ghostTex, ghostRunScale);
+  }
+
+  finalizeGhostRecording(time) {
+    if (!this.isGhostRaceActive() || !this.hasStarted) {
+      return;
+    }
+
+    this.recordGhostSample(time);
+
+    const recording = {
+      v: GHOST_FORMAT_VERSION,
+      finalScore: Math.floor(this.score),
+      durationMs: Math.max(0, time - this.ghostRunStartTime),
+      deathT: this.findGhostDeathTime(this.ghostRunSamples),
+      samples: this.ghostRunSamples,
+    };
+
+    if (recording.samples.length < 2) {
+      return;
+    }
+
+    if (!this.ghostBest || recording.finalScore >= this.ghostBest.finalScore) {
+      this.saveGhostBest(recording);
+      this.ghostBest = recording;
+    }
   }
 
   updateDogAnimation(onGround) {
@@ -831,7 +1216,7 @@ export default class GameScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true });
 
     this.devPanelBg = this.add
-      .rectangle(10, 42, 250, 202, 0x111827, 0.92)
+      .rectangle(10, 42, 250, 254, 0x111827, 0.92)
       .setOrigin(0, 0)
       .setScrollFactor(0)
       .setDepth(DEV_MENU_DEPTH)
@@ -881,12 +1266,26 @@ export default class GameScene extends Phaser.Scene {
       }),
     };
 
+    this.ghostButtons = {
+      on: this.createDevOption(18, 214, 'Ghost', optionStyle, () => {
+        this.setGhostRace(true);
+      }),
+      off: this.createDevOption(88, 214, 'No ghost', optionStyle, () => {
+        this.setGhostRace(false);
+      }),
+      clear: this.createDevOption(158, 214, 'Clr', optionStyle, () => {
+        this.clearGhostBest();
+        this.refreshDevMenu();
+      }),
+    };
+
     this.devMenuItems = [
       this.devPanelBg,
       ...Object.values(this.weatherButtons),
       ...Object.values(this.dayButtons),
       ...Object.values(this.speedButtons),
       ...Object.values(this.cycleButtons),
+      ...Object.values(this.ghostButtons),
     ];
 
     this.bindDevMenuInput(this.devButton, () => {
@@ -925,6 +1324,7 @@ export default class GameScene extends Phaser.Scene {
     }
 
     const cycleOn = GameScene.devDayNightCycle === 'on';
+    const ghostOn = GameScene.devGhostRace === 'on';
 
     Object.entries(this.weatherButtons).forEach(([mode, button]) => {
       if (button?.active) {
@@ -949,6 +1349,18 @@ export default class GameScene extends Phaser.Scene {
     Object.entries(this.cycleButtons).forEach(([key, button]) => {
       if (button?.active) {
         const selected = (key === 'on' && cycleOn) || (key === 'off' && !cycleOn);
+        button.setBackgroundColor(selected ? '#2563eb' : '#374151');
+      }
+    });
+
+    Object.entries(this.ghostButtons ?? {}).forEach(([key, button]) => {
+      if (button?.active) {
+        if (key === 'clear') {
+          button.setBackgroundColor('#374151');
+          return;
+        }
+
+        const selected = (key === 'on' && ghostOn) || (key === 'off' && !ghostOn);
         button.setBackgroundColor(selected ? '#2563eb' : '#374151');
       }
     });
@@ -1251,6 +1663,7 @@ export default class GameScene extends Phaser.Scene {
     this.speedMultiplier = this.getSpeedMultiplier();
     this.scrollSpeed = BASE_SCROLL_SPEED * this.speedMultiplier;
     this.score = 0;
+    this.displayedScore = -1;
     this.nextRockTime = Phaser.Math.Between(ROCK_SPAWN_INITIAL_MIN_MS, ROCK_SPAWN_INITIAL_MAX_MS);
     this.nextMudTime = Phaser.Math.Between(2000, 3500);
     this.nextHeartSpawnScore = Phaser.Math.Between(
@@ -1268,6 +1681,20 @@ export default class GameScene extends Phaser.Scene {
     this.coyoteMs = 0;
     this.wasAirborne = false;
     this.jumpPhase = null;
+
+    this.ghostBest = this.loadGhostBest();
+    this.ghostBestAtRunStart = this.ghostBest
+      ? {
+          finalScore: this.ghostBest.finalScore,
+          deathT:
+            this.ghostBest.deathT ?? this.findGhostDeathTime(this.ghostBest.samples),
+          samples: [...this.ghostBest.samples],
+        }
+      : null;
+    this.ghostRunSamples = [];
+    this.ghostRunStartTime = 0;
+    this.lastGhostSampleTime = 0;
+    this.resetGhostFadeState();
 
     const sky = this.createParallaxLayer('sky', -20);
     this.skyLayer = sky.layer;
@@ -1306,6 +1733,8 @@ export default class GameScene extends Phaser.Scene {
     this.dog.setMaxVelocity(600, 720);
     this.dog.setBounce(0);
     this.physics.add.collider(this.dog, groundCollider);
+
+    this.createGhostDog();
 
     this.obstacles = this.physics.add.staticGroup();
     this.mudPatches = this.physics.add.staticGroup();
@@ -1402,7 +1831,11 @@ export default class GameScene extends Phaser.Scene {
     this.groundLayer.tilePositionX += (scrollDelta * PARALLAX_GROUND) / this.groundScale;
 
     this.score += effectiveScrollSpeed * dt * 0.1;
-    this.scoreText.setText(Math.floor(this.score).toString());
+    const displayScore = Math.floor(this.score);
+    if (displayScore !== this.displayedScore) {
+      this.displayedScore = displayScore;
+      this.scoreText.setText(displayScore.toString());
+    }
 
     if (this.score >= this.nextHeartSpawnScore) {
       this.spawnHeartPickups();
@@ -1468,6 +1901,8 @@ export default class GameScene extends Phaser.Scene {
     this.applyJumpPhysics(dt);
     this.checkRockCollisions();
     this.updateDogAnimation(this.isDogOnGround());
+    this.recordGhostSample(time);
+    this.updateGhostRace(time);
   }
 
   isJumpInputHeld() {
@@ -1620,6 +2055,18 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
+    this.finalizeGhostRecording(this.time.now);
+    this.ghostDog?.setVisible(false);
+
+    const beatGhost =
+      this.ghostBestAtRunStart &&
+      Math.floor(this.score) > this.ghostBestAtRunStart.finalScore;
+    const gameOverSubtext = beatGhost
+      ? '\nYou beat your ghost!'
+      : this.ghostBestAtRunStart
+        ? `\nGhost: ${this.ghostBestAtRunStart.finalScore}`
+        : '';
+
     this.isGameOver = true;
     this.wasAirborne = false;
     this.jumpPhase = null;
@@ -1632,7 +2079,7 @@ export default class GameScene extends Phaser.Scene {
     this.placeDogForDeath();
 
     this.add
-      .text(WIDTH / 2, HEIGHT / 2, 'Game Over\nTap to Restart', {
+      .text(WIDTH / 2, HEIGHT / 2, `Game Over\nTap to Restart${gameOverSubtext}`, {
         fontFamily: 'Arial, sans-serif',
         fontSize: '28px',
         color: '#ffffff',
@@ -1661,6 +2108,7 @@ export default class GameScene extends Phaser.Scene {
     this.updateHeartsHud();
     this.hitCooldownMs = HIT_COOLDOWN_MS;
     this.dog.x = DOG_X;
+    this.recordGhostSample(this.time.now, true);
 
     if (this.hearts <= 0) {
       this.triggerGameOver();
