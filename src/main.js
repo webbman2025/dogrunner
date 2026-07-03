@@ -65,6 +65,9 @@ const config = {
     height: 800,
     expandParent: false,
   },
+  audio: {
+    noAudio: true,
+  },
   scene: [GameScene],
 };
 
