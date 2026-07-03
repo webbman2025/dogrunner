@@ -8,23 +8,62 @@ const DOG_X = 100;
 const BASE_SCROLL_SPEED = 220;
 const GRAVITY_RISE = 1000;
 const GRAVITY_FALL = 1600;
-const GRAVITY_HOLD_RISE = 550;
-const ROCK_HEIGHT = 32;
-const MIN_JUMP_VELOCITY = -800;
-const MAX_JUMP_VELOCITY = -560;
-const JUMP_HOLD_ACCEL = 1400;
+const GRAVITY_HOLD_RISE = 750;
+const OBSTACLE_DISPLAY_H = 40;
+const OBSTACLE_DISPLAY_W = Math.round((126 / 120) * OBSTACLE_DISPLAY_H);
+const MUD_TEXTURE_W = 400;
+const MUD_TEXTURE_H = 111;
+const MUD_DISPLAY_H = 40;
+const MUD_DISPLAY_W = Math.round((MUD_TEXTURE_W / MUD_TEXTURE_H) * MUD_DISPLAY_H);
+const MUD_SLOW_FACTOR = 0.5;
+const MUD_SPAWN_MIN_MS = 4000;
+const MUD_SPAWN_MAX_MS = 6500;
+const ROCK_SPAWN_X = WIDTH + 40;
+const ROCK_SPAWN_INITIAL_MIN_MS = 1400;
+const ROCK_SPAWN_INITIAL_MAX_MS = 2600;
+const ROCK_SPAWN_MIN_MS = 2200;
+const ROCK_SPAWN_MAX_MS = 4200;
+const ROCK_SPAWN_MIN_FLOOR_MS = 1400;
+const ROCK_SPAWN_MAX_FLOOR_MS = 2600;
+const MUD_SPAWN_X = WIDTH + 60;
+const HAZARD_MIN_GAP_PX = 100;
+const HAZARD_RETRY_MS = 450;
+const HEART_PICKUP_SPAWN_MIN_SCORE = 200;
+const HEART_PICKUP_SPAWN_MAX_SCORE = 300;
+const HEART_PICKUP_SPAWN_X = WIDTH + 120;
+const HEART_PICKUP_PAIR_GAP_X = 64;
+const HEART_PICKUP_SIZE = 50;
+const HEART_PICKUP_Y_MIN = 340;
+const HEART_PICKUP_Y_MAX = 460;
+const HEART_PICKUP_HITBOX = {
+  x: 22,
+  y: 18,
+  w: 52,
+  h: 46,
+};
+const HEART_PICKUP_COLLECT_PAD = 10;
+const DOG_HEART_COLLECT_PAD = 8;
+const COYOTE_MS = 130;
+const GROUND_SNAP_TOLERANCE = 8;
+const MIN_JUMP_VELOCITY = -720;
+const MAX_JUMP_VELOCITY = -500;
+const JUMP_HOLD_ACCEL = 1200;
 const JUMP_CUT_FACTOR = 0.5;
+const JUMP_CUT_VELOCITY_THRESHOLD = -80;
 const TAP_THRESHOLD_MS = 150;
-const COYOTE_MS = 100;
+const JUMP_AIR_BOOST_IMPULSE = 0.12;
+const JUMP_AIR_BOOST_VELOCITY_CAP = -500;
+const FALL_JUMP_VELOCITY = -630;
+const FALL_JUMP_MIN_DESCENT_VELOCITY = 80;
 const BG_TEXTURE_HEIGHT = 1024;
 const PARALLAX_SKY = 0.3;
 const PARALLAX_GROUND = 1;
 const DOG_SCALE = 0.62;
 const DOG_HITBOX = {
-  x: 59,
-  y: 194,
-  w: 145,
-  h: 58,
+  x: 74,
+  y: 200,
+  w: 110,
+  h: 52,
 };
 const DOG_FRAME_H = 263;
 const SLEEP_Y_OFFSET = 10;
@@ -33,16 +72,23 @@ const DOG_RUN_GROUND_Y =
   GROUND_SURFACE + DOG_Y_OFFSET + (DOG_FRAME_H - DOG_HITBOX_BOTTOM) * DOG_SCALE;
 const DOG_SLEEP_Y = DOG_RUN_GROUND_Y + SLEEP_Y_OFFSET;
 const ROCK_HITBOX = {
-  x: 6,
-  y: 6,
-  w: 36,
-  h: 22,
+  x: 34,
+  y: 52,
+  w: 58,
+  h: 48,
+};
+const MUD_HITBOX = {
+  x: 24,
+  y: 72,
+  w: 352,
+  h: 32,
 };
 const DOG_SHADOW_DEPTH = -1;
 const DOG_SHADOW_WIDTH = 120;
 const DOG_SHADOW_HEIGHT = 14;
 const DOG_SHADOW_Y_OFFSET = -30;
 const ROCK_Y_OFFSET = DOG_SHADOW_Y_OFFSET;
+const MUD_Y_OFFSET = -15;
 const DOG_SHADOW_MAX_HEIGHT = 420;
 const DOG_SHADOW_MIN_SCALE = 0.22;
 const RAIN_BACK_DEPTH = 3;
@@ -66,6 +112,7 @@ const HEARTS_BORDER = 0x6d5a55;
 const HEARTS_BORDER_W = 2;
 const HEARTS_HUD_Y = 45;
 const SCORE_TEXT_Y = 73;
+const TAP_TO_START_Y = HEIGHT / 2;
 const HIT_COOLDOWN_MS = 1400;
 const BUMP_SHAKE_DURATION = 160;
 const BUMP_SHAKE_INTENSITY = 0.012;
@@ -113,6 +160,7 @@ export default class GameScene extends Phaser.Scene {
     this.load.image('sky', 'assets/front.png');
     this.load.image('ground', 'assets/ground.png');
     this.load.image('obstacle', 'assets/rock.png');
+    this.load.image('mud', 'assets/mud.png');
 
     for (let i = 0; i < DOG_FRAME_COUNTS.run; i++) {
       this.load.image(`run_${i}`, `assets/dog/run_${i}.png`);
@@ -128,6 +176,7 @@ export default class GameScene extends Phaser.Scene {
 
     this.load.image('heart-full', 'assets/ui/heart-full.png');
     this.load.image('heart-empty', 'assets/ui/heart-empty.png');
+    this.load.image('heart-pickup', 'assets/heart-pickup.png');
   }
 
   createHeartsHud() {
@@ -156,10 +205,143 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
+  resetHeartIcon(icon) {
+    this.tweens.killTweensOf(icon);
+    icon.setDisplaySize(HEART_W, HEART_H);
+  }
+
   updateHeartsHud() {
     for (let i = 0; i < MAX_HEARTS; i++) {
-      this.heartIcons[i].setTexture(i < this.hearts ? 'heart-full' : 'heart-empty');
+      const icon = this.heartIcons[i];
+      icon.setTexture(i < this.hearts ? 'heart-full' : 'heart-empty');
+      this.resetHeartIcon(icon);
     }
+  }
+
+  playHeartCollectFeedback() {
+    const index = this.hearts - 1;
+    if (index < 0 || index >= this.heartIcons.length) {
+      return;
+    }
+
+    const icon = this.heartIcons[index];
+    this.resetHeartIcon(icon);
+
+    this.tweens.add({
+      targets: icon,
+      displayWidth: HEART_W * 1.15,
+      displayHeight: HEART_H * 1.15,
+      duration: 120,
+      yoyo: true,
+      onComplete: () => {
+        this.resetHeartIcon(icon);
+      },
+    });
+  }
+
+  isHeartPickupInRange(pickup) {
+    if (!pickup.active) {
+      return false;
+    }
+
+    const dogBody = this.dog.body;
+    const heart = pickup.getBounds();
+    const dogPad = DOG_HEART_COLLECT_PAD;
+    const heartPad = HEART_PICKUP_COLLECT_PAD;
+
+    if (dogBody) {
+      const bodyHit =
+        dogBody.left - dogPad < heart.right + heartPad &&
+        dogBody.right + dogPad > heart.left - heartPad &&
+        dogBody.top - dogPad < heart.bottom + heartPad &&
+        dogBody.bottom + dogPad > heart.top - heartPad;
+
+      if (bodyHit) {
+        return true;
+      }
+    }
+
+    const dog = this.dog.getBounds();
+
+    return (
+      dog.left - dogPad < heart.right + heartPad &&
+      dog.right + dogPad > heart.left - heartPad &&
+      dog.top - dogPad < heart.bottom + heartPad &&
+      dog.bottom + dogPad > heart.top - heartPad
+    );
+  }
+
+  checkHeartPickups() {
+    if (this.isGameOver) {
+      return;
+    }
+
+    this.physics.overlap(this.dog, this.heartPickups, (_dog, pickup) => {
+      this.collectHeart(pickup);
+    });
+
+    const pickups = [...this.heartPickups.getChildren()];
+    pickups.forEach((pickup) => {
+      if (this.isHeartPickupInRange(pickup)) {
+        this.collectHeart(pickup);
+      }
+    });
+  }
+
+  collectHeart(pickup) {
+    if (!pickup.active || pickup.getData('collected')) {
+      return;
+    }
+
+    pickup.setData('collected', true);
+    pickup.destroy();
+
+    if (this.hearts < MAX_HEARTS) {
+      this.hearts += 1;
+      this.updateHeartsHud();
+      this.playHeartCollectFeedback();
+    }
+  }
+
+  createTapToStartOverlay() {
+    this.tapToStartText = this.add
+      .text(WIDTH / 2, TAP_TO_START_Y, 'Tap to Start', {
+        fontFamily: 'Arial, sans-serif',
+        fontSize: '36px',
+        color: '#ffffff',
+        stroke: '#000000',
+        strokeThickness: 6,
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(HEARTS_DEPTH + 2);
+
+    this.tweens.add({
+      targets: this.tapToStartText,
+      alpha: 0.4,
+      duration: 700,
+      yoyo: true,
+      repeat: -1,
+    });
+  }
+
+  startGameplay() {
+    if (this.hasStarted) {
+      return;
+    }
+
+    this.hasStarted = true;
+
+    if (this.tapToStartText) {
+      this.tweens.killTweensOf(this.tapToStartText);
+      this.tapToStartText.destroy();
+      this.tapToStartText = null;
+    }
+
+    const now = this.time.now;
+    this.nextRockTime = now + Phaser.Math.Between(ROCK_SPAWN_INITIAL_MIN_MS, ROCK_SPAWN_INITIAL_MAX_MS);
+    this.nextMudTime = now + Phaser.Math.Between(2000, 3500);
+    this.physics.resume();
   }
 
   playCollisionBump() {
@@ -225,6 +407,47 @@ export default class GameScene extends Phaser.Scene {
     rock.refreshBody();
   }
 
+  setupMudPhysics(mud) {
+    mud.body.setSize(MUD_HITBOX.w, MUD_HITBOX.h);
+    mud.body.setOffset(MUD_HITBOX.x, MUD_HITBOX.y);
+    mud.refreshBody();
+  }
+
+  getHazardClearance(spawnX, spawnHalfWidth, other) {
+    const otherHalfWidth = other.displayWidth / 2;
+    return Math.abs(spawnX - other.x) - spawnHalfWidth - otherHalfWidth;
+  }
+
+  isHazardTooClose(spawnX, displayWidth, others) {
+    const halfWidth = displayWidth / 2;
+    return others.getChildren().some(
+      (other) => this.getHazardClearance(spawnX, halfWidth, other) < HAZARD_MIN_GAP_PX,
+    );
+  }
+
+  setupHeartPickupPhysics(pickup) {
+    pickup.body.setSize(HEART_PICKUP_HITBOX.w, HEART_PICKUP_HITBOX.h);
+    pickup.body.setOffset(HEART_PICKUP_HITBOX.x, HEART_PICKUP_HITBOX.y);
+    pickup.refreshBody();
+  }
+
+  spawnHeartPickups() {
+    const count = Phaser.Math.Between(1, 2);
+    const baseY = Phaser.Math.Between(HEART_PICKUP_Y_MIN, HEART_PICKUP_Y_MAX);
+    const pairStartX =
+      count === 1 ? HEART_PICKUP_SPAWN_X : HEART_PICKUP_SPAWN_X - HEART_PICKUP_PAIR_GAP_X / 2;
+
+    for (let i = 0; i < count; i++) {
+      const x = pairStartX + i * HEART_PICKUP_PAIR_GAP_X;
+      const y = baseY + (count === 2 ? Phaser.Math.Between(-24, 24) : 0);
+      const pickup = this.heartPickups.create(x, y, 'heart-pickup');
+      pickup.setOrigin(0.5, 0.5);
+      pickup.setDisplaySize(HEART_PICKUP_SIZE, HEART_PICKUP_SIZE);
+      pickup.setDepth(4);
+      this.setupHeartPickupPhysics(pickup);
+    }
+  }
+
   createDogShadow() {
     this.dogShadow = this.add.ellipse(
       DOG_X,
@@ -261,7 +484,12 @@ export default class GameScene extends Phaser.Scene {
       this.wasAirborne = false;
       this.jumpPhase = null;
 
-      if (this.dog.anims.currentAnim?.key !== 'run') {
+      const usingJumpSprite = this.dog.texture.key.startsWith('jump_');
+      if (
+        usingJumpSprite ||
+        !this.dog.anims.isPlaying ||
+        this.dog.anims.currentAnim?.key !== 'run'
+      ) {
         this.dog.play('run', true);
       }
       return;
@@ -272,8 +500,9 @@ export default class GameScene extends Phaser.Scene {
 
     if (!this.wasAirborne) {
       this.wasAirborne = true;
-      this.jumpPhase = 'launch';
-      this.dog.play('jump_launch');
+      this.jumpPhase = rising ? 'hold' : 'fall';
+      this.dog.setTexture(rising ? 'jump_1' : 'jump_2');
+      this.dog.anims.stop();
       return;
     }
 
@@ -694,6 +923,11 @@ export default class GameScene extends Phaser.Scene {
         return;
       }
 
+      if (!this.hasStarted) {
+        this.startGameplay();
+        return;
+      }
+
       if (this.isGameOver) {
         this.scene.restart();
         return;
@@ -963,9 +1197,20 @@ export default class GameScene extends Phaser.Scene {
     this.speedMultiplier = this.getSpeedMultiplier();
     this.scrollSpeed = BASE_SCROLL_SPEED * this.speedMultiplier;
     this.score = 0;
-    this.nextRockTime = 0;
+    this.nextRockTime = Phaser.Math.Between(ROCK_SPAWN_INITIAL_MIN_MS, ROCK_SPAWN_INITIAL_MAX_MS);
+    this.nextMudTime = Phaser.Math.Between(2000, 3500);
+    this.nextHeartSpawnScore = Phaser.Math.Between(
+      HEART_PICKUP_SPAWN_MIN_SCORE,
+      HEART_PICKUP_SPAWN_MAX_SCORE,
+    );
+    this.isInMud = false;
     this.jumpHeld = false;
     this.jumpPressTime = 0;
+    this.jumpBoostUsed = false;
+    this.fallJumpUsed = false;
+    this.groundJumpActive = false;
+    this.wasAirborneLastFrame = false;
+    this.jumpBuffered = false;
     this.coyoteMs = 0;
     this.wasAirborne = false;
     this.jumpPhase = null;
@@ -1009,6 +1254,8 @@ export default class GameScene extends Phaser.Scene {
     this.physics.add.collider(this.dog, groundCollider);
 
     this.obstacles = this.physics.add.staticGroup();
+    this.mudPatches = this.physics.add.staticGroup();
+    this.heartPickups = this.physics.add.staticGroup();
 
     this.physics.add.overlap(this.dog, this.obstacles, this.handleCollision, null, this);
 
@@ -1034,6 +1281,10 @@ export default class GameScene extends Phaser.Scene {
     this.spaceKey.on('up', () => this.endJump());
     this.cursors.up.on('down', () => this.startJump());
     this.cursors.up.on('up', () => this.endJump());
+
+    this.hasStarted = false;
+    this.physics.pause();
+    this.createTapToStartOverlay();
   }
 
   update(time, delta) {
@@ -1046,33 +1297,70 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
+    if (!this.hasStarted) {
+      this.dog.x = DOG_X;
+      this.dog.y = DOG_RUN_GROUND_Y;
+      if (!this.dog.anims.isPlaying || this.dog.anims.currentAnim?.key !== 'run') {
+        this.dog.play('run', true);
+      }
+      return;
+    }
+
     if (this.hitCooldownMs > 0) {
       this.hitCooldownMs = Math.max(0, this.hitCooldownMs - delta);
     }
 
     const dt = delta / 1000;
-
-    const scrollDelta = this.scrollSpeed * dt;
-    this.skyLayer.tilePositionX += (scrollDelta * PARALLAX_SKY) / this.skyScale;
-    this.groundLayer.tilePositionX += (scrollDelta * PARALLAX_GROUND) / this.groundScale;
-
-    this.score += this.scrollSpeed * dt * 0.1;
-    this.scoreText.setText(Math.floor(this.score).toString());
-    this.updateDayNightCycle(delta);
+    const onGround = this.dog.body.blocked.down || this.dog.body.touching.down;
 
     const maxSpeed = 420 * this.speedMultiplier;
     const baseSpeed = BASE_SCROLL_SPEED * this.speedMultiplier;
     this.scrollSpeed = Math.min(baseSpeed + this.score * 0.05 * this.speedMultiplier, maxSpeed);
 
+    this.isInMud = onGround && this.physics.overlap(this.dog, this.mudPatches);
+    const mudSlowFactor = this.isInMud ? MUD_SLOW_FACTOR : 1;
+    const effectiveScrollSpeed = this.scrollSpeed * mudSlowFactor;
+    this.dog.anims.timeScale = mudSlowFactor;
+
     if (time >= this.nextRockTime) {
-      this.spawnRock();
-      const minGap = Phaser.Math.Clamp(1800 - this.score * 2, 900, 1800);
-      const maxGap = Phaser.Math.Clamp(3200 - this.score * 2, 1400, 3200);
-      this.nextRockTime = time + Phaser.Math.Between(minGap, maxGap);
+      if (this.isHazardTooClose(ROCK_SPAWN_X, OBSTACLE_DISPLAY_W, this.mudPatches)) {
+        this.nextRockTime = time + HAZARD_RETRY_MS;
+      } else {
+        this.spawnRock();
+        const minGap = Phaser.Math.Clamp(ROCK_SPAWN_MIN_MS - this.score, ROCK_SPAWN_MIN_FLOOR_MS, ROCK_SPAWN_MIN_MS);
+        const maxGap = Phaser.Math.Clamp(ROCK_SPAWN_MAX_MS - this.score, ROCK_SPAWN_MAX_FLOOR_MS, ROCK_SPAWN_MAX_MS);
+        this.nextRockTime = time + Phaser.Math.Between(minGap, maxGap);
+      }
     }
 
+    if (time >= this.nextMudTime) {
+      if (this.isHazardTooClose(MUD_SPAWN_X, MUD_DISPLAY_W, this.obstacles)) {
+        this.nextMudTime = time + HAZARD_RETRY_MS;
+      } else {
+        this.spawnMud();
+        this.nextMudTime = time + Phaser.Math.Between(MUD_SPAWN_MIN_MS, MUD_SPAWN_MAX_MS);
+      }
+    }
+
+    const scrollDelta = effectiveScrollSpeed * dt;
+    this.skyLayer.tilePositionX += (scrollDelta * PARALLAX_SKY) / this.skyScale;
+    this.groundLayer.tilePositionX += (scrollDelta * PARALLAX_GROUND) / this.groundScale;
+
+    this.score += effectiveScrollSpeed * dt * 0.1;
+    this.scoreText.setText(Math.floor(this.score).toString());
+
+    if (this.score >= this.nextHeartSpawnScore) {
+      this.spawnHeartPickups();
+      this.nextHeartSpawnScore += Phaser.Math.Between(
+        HEART_PICKUP_SPAWN_MIN_SCORE,
+        HEART_PICKUP_SPAWN_MAX_SCORE,
+      );
+    }
+
+    this.updateDayNightCycle(delta);
+
     this.obstacles.getChildren().forEach((rock) => {
-      rock.x -= this.scrollSpeed * dt;
+      rock.x -= effectiveScrollSpeed * dt;
       rock.refreshBody();
 
       if (rock.x < -rock.displayWidth) {
@@ -1080,15 +1368,47 @@ export default class GameScene extends Phaser.Scene {
       }
     });
 
+    this.mudPatches.getChildren().forEach((mud) => {
+      mud.x -= effectiveScrollSpeed * dt;
+      mud.refreshBody();
+
+      if (mud.x < -mud.displayWidth) {
+        mud.destroy();
+      }
+    });
+
+    this.heartPickups.getChildren().forEach((pickup) => {
+      pickup.x -= effectiveScrollSpeed * dt;
+      pickup.refreshBody();
+
+      if (pickup.x < -pickup.displayWidth) {
+        pickup.destroy();
+      }
+    });
+
+    this.checkHeartPickups();
+
     this.dog.x = DOG_X;
     this.dog.setVelocityX(0);
 
-    const onGround = this.dog.body.blocked.down || this.dog.body.touching.down;
     if (onGround) {
       this.coyoteMs = COYOTE_MS;
+
+      if (this.wasAirborneLastFrame) {
+        this.jumpBoostUsed = false;
+        this.fallJumpUsed = false;
+        this.groundJumpActive = false;
+      }
     } else {
       this.coyoteMs = Math.max(0, this.coyoteMs - delta);
     }
+
+    if (this.jumpBuffered && this.canJump()) {
+      this.performJump();
+      this.jumpBuffered = false;
+    }
+
+    this.wasAirborneLastFrame = !onGround;
 
     this.applyJumpPhysics(dt);
     this.updateDogAnimation(onGround);
@@ -1100,7 +1420,9 @@ export default class GameScene extends Phaser.Scene {
 
   applyJumpPhysics(dt) {
     const rising = this.dog.body.velocity.y < 0;
-    const holdingJump = rising && this.isJumpInputHeld();
+    const heldLongEnough = this.time.now - this.jumpPressTime >= TAP_THRESHOLD_MS;
+    const holdingJump =
+      rising && this.isJumpInputHeld() && this.groundJumpActive && heldLongEnough;
 
     if (holdingJump) {
       this.dog.setGravityY(GRAVITY_HOLD_RISE);
@@ -1113,18 +1435,67 @@ export default class GameScene extends Phaser.Scene {
   }
 
   spawnRock() {
-    const rock = this.obstacles.create(WIDTH + 40, GROUND_SURFACE + ROCK_Y_OFFSET, 'obstacle');
+    const rock = this.obstacles.create(ROCK_SPAWN_X, GROUND_SURFACE + ROCK_Y_OFFSET, 'obstacle');
     rock.setOrigin(0.5, 1);
+    rock.setDisplaySize(OBSTACLE_DISPLAY_W, OBSTACLE_DISPLAY_H);
     rock.y = GROUND_SURFACE + ROCK_Y_OFFSET;
     this.setupRockPhysics(rock);
   }
 
+  spawnMud() {
+    const mud = this.mudPatches.create(MUD_SPAWN_X, GROUND_SURFACE + MUD_Y_OFFSET, 'mud');
+    mud.setOrigin(0.5, 1);
+    mud.setDisplaySize(MUD_DISPLAY_W, MUD_DISPLAY_H);
+    mud.setDepth(-1);
+    mud.y = GROUND_SURFACE + MUD_Y_OFFSET;
+    this.setupMudPhysics(mud);
+  }
+
   canJump() {
+    const nearGround = Math.abs(this.dog.y - DOG_RUN_GROUND_Y) <= GROUND_SNAP_TOLERANCE;
+
     return (
       this.dog.body.blocked.down ||
       this.dog.body.touching.down ||
-      this.coyoteMs > 0
+      this.coyoteMs > 0 ||
+      nearGround
     );
+  }
+
+  performJump() {
+    if (this.isGameOver || !this.canJump()) {
+      return false;
+    }
+
+    this.coyoteMs = 0;
+    this.groundJumpActive = true;
+    this.dog.setVelocityY(MIN_JUMP_VELOCITY);
+    this.dog.setGravityY(GRAVITY_RISE);
+    this.dog.refreshBody();
+    return true;
+  }
+
+  performFallJump() {
+    if (this.isGameOver || this.canJump()) {
+      return false;
+    }
+
+    this.groundJumpActive = true;
+    this.dog.setVelocityY(FALL_JUMP_VELOCITY);
+    this.dog.setGravityY(GRAVITY_RISE);
+    this.dog.refreshBody();
+    return true;
+  }
+
+  boostAirJump() {
+    if (this.dog.body.velocity.y >= 0) {
+      return;
+    }
+
+    this.groundJumpActive = false;
+    const boostImpulse = MIN_JUMP_VELOCITY * JUMP_AIR_BOOST_IMPULSE;
+    const boostedVelocity = this.dog.body.velocity.y + boostImpulse;
+    this.dog.setVelocityY(Math.min(boostedVelocity, JUMP_AIR_BOOST_VELOCITY_CAP));
   }
 
   startJump() {
@@ -1132,12 +1503,33 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
+    if (!this.hasStarted) {
+      this.startGameplay();
+      return;
+    }
+
     this.jumpHeld = true;
     this.jumpPressTime = this.time.now;
 
-    if (this.canJump()) {
-      this.coyoteMs = 0;
-      this.dog.setVelocityY(MIN_JUMP_VELOCITY);
+    if (this.performJump()) {
+      this.jumpBuffered = false;
+      return;
+    }
+
+    if (this.coyoteMs > 0 || Math.abs(this.dog.y - DOG_RUN_GROUND_Y) <= GROUND_SNAP_TOLERANCE) {
+      this.jumpBuffered = true;
+    }
+
+    if (!this.jumpBoostUsed && this.dog.body.velocity.y < 0) {
+      this.boostAirJump();
+      this.jumpBoostUsed = true;
+      return;
+    }
+
+    if (!this.fallJumpUsed && this.dog.body.velocity.y > FALL_JUMP_MIN_DESCENT_VELOCITY) {
+      if (this.performFallJump()) {
+        this.fallJumpUsed = true;
+      }
     }
   }
 
@@ -1145,9 +1537,14 @@ export default class GameScene extends Phaser.Scene {
     this.jumpHeld = false;
 
     const heldFor = this.time.now - this.jumpPressTime;
-    if (heldFor > TAP_THRESHOLD_MS && this.dog.body.velocity.y < 0) {
-      const cutVelocity = this.dog.body.velocity.y * JUMP_CUT_FACTOR;
-      this.dog.setVelocityY(Math.min(cutVelocity, MIN_JUMP_VELOCITY));
+    const vy = this.dog.body.velocity.y;
+
+    if (
+      heldFor > TAP_THRESHOLD_MS &&
+      vy < JUMP_CUT_VELOCITY_THRESHOLD
+    ) {
+      const cutVelocity = vy * JUMP_CUT_FACTOR;
+      this.dog.setVelocityY(Math.max(cutVelocity, MIN_JUMP_VELOCITY));
     }
   }
 
@@ -1174,6 +1571,7 @@ export default class GameScene extends Phaser.Scene {
     this.isGameOver = true;
     this.wasAirborne = false;
     this.jumpPhase = null;
+    this.dog.anims.timeScale = 1;
     this.physics.pause();
     this.tweens.killTweensOf(this.dog);
     this.dog.setAlpha(1);

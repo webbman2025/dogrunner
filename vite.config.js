@@ -11,14 +11,16 @@ export default defineConfig({
     target: 'es2015',
   },
   server: {
-    host: true,
+    host: '0.0.0.0',
     port: 5173,
     strictPort: true,
     cors: true,
+    allowedHosts: true,
   },
   preview: {
-    host: true,
+    host: '0.0.0.0',
     port: 4173,
     strictPort: true,
+    allowedHosts: true,
   },
 });
