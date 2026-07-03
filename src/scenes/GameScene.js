@@ -68,7 +68,7 @@ const DOG_HITBOX = {
 };
 const DOG_HITBOX_INSET = {
   left: 6,
-  right: 12,
+  right: 14,
   top: 0,
   bottom: 0,
 };
@@ -78,10 +78,9 @@ const DOG_HITBOX_BOTTOM = DOG_HITBOX.y + DOG_HITBOX.h;
 const DOG_RUN_GROUND_Y =
   GROUND_SURFACE + DOG_Y_OFFSET + (DOG_FRAME_H - DOG_HITBOX_BOTTOM) * DOG_SCALE;
 const DOG_SLEEP_Y = DOG_RUN_GROUND_Y + SLEEP_Y_OFFSET;
-const ROCK_COLLISION_PAD_X = 6;
-const ROCK_FRAME_HITBOX_W = 50;
-const ROCK_FRAME_HITBOX_H = 78;
-const ROCK_COLLISION_PAD_Y = 4;
+// Texture-space hitbox for visible poop pile (excludes flies / side padding).
+const ROCK_FRAME_HITBOX_W = 90;
+const ROCK_FRAME_HITBOX_H = 72;
 const MUD_HITBOX = {
   x: 24,
   y: 72,
@@ -413,13 +412,10 @@ export default class GameScene extends Phaser.Scene {
   }
 
   setupRockPhysics(rock) {
-    const sourceW = ROCK_FRAME_HITBOX_W - ROCK_COLLISION_PAD_X * 2;
-    const sourceH = ROCK_FRAME_HITBOX_H;
-
-    rock.body.setSize(sourceW, sourceH);
+    rock.body.setSize(ROCK_FRAME_HITBOX_W, ROCK_FRAME_HITBOX_H);
     rock.body.setOffset(
-      (rock.frame.width - sourceW) / 2,
-      rock.frame.height - sourceH,
+      (rock.frame.width - ROCK_FRAME_HITBOX_W) / 2,
+      rock.frame.height - ROCK_FRAME_HITBOX_H,
     );
     rock.refreshBody();
   }
@@ -431,14 +427,12 @@ export default class GameScene extends Phaser.Scene {
 
     const dog = this.dog.body;
     const rockBody = rock.body;
-    const padX = 2;
-    const padY = ROCK_COLLISION_PAD_Y;
 
     return (
-      dog.left - padX < rockBody.right + padX &&
-      dog.right + padX > rockBody.left - padX &&
-      dog.top - padY < rockBody.bottom + padY &&
-      dog.bottom + padY > rockBody.top - padY
+      dog.left < rockBody.right &&
+      dog.right > rockBody.left &&
+      dog.top < rockBody.bottom &&
+      dog.bottom > rockBody.top
     );
   }
 
@@ -446,6 +440,8 @@ export default class GameScene extends Phaser.Scene {
     if (this.isGameOver || this.hitCooldownMs > 0) {
       return;
     }
+
+    this.dog.refreshBody();
 
     for (const rock of this.obstacles.getChildren()) {
       if (this.isRockHittingDog(rock)) {
@@ -1304,8 +1300,6 @@ export default class GameScene extends Phaser.Scene {
     this.obstacles = this.physics.add.staticGroup();
     this.mudPatches = this.physics.add.staticGroup();
     this.heartPickups = this.physics.add.staticGroup();
-
-    this.physics.add.overlap(this.dog, this.obstacles, this.handleCollision, null, this);
 
     this.createHeartsHud();
 
