@@ -396,7 +396,7 @@ export default class GameScene extends Phaser.Scene {
       key: 'dead',
       frames: sleepFrames,
       frameRate: 8,
-      repeat: 0,
+      repeat: -1,
     });
   }
 
@@ -1342,6 +1342,9 @@ export default class GameScene extends Phaser.Scene {
     if (this.isGameOver) {
       this.dog.x = DOG_X;
       this.dog.y = DOG_SLEEP_Y;
+      if (!this.dog.anims.isPlaying || this.dog.anims.currentAnim?.key !== 'dead') {
+        this.dog.play('dead', true);
+      }
       return;
     }
 
