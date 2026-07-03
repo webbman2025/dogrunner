@@ -66,18 +66,22 @@ const DOG_HITBOX = {
   w: 110,
   h: 52,
 };
+const DOG_HITBOX_INSET = {
+  left: 6,
+  right: 12,
+  top: 0,
+  bottom: 0,
+};
 const DOG_FRAME_H = 263;
 const SLEEP_Y_OFFSET = 10;
 const DOG_HITBOX_BOTTOM = DOG_HITBOX.y + DOG_HITBOX.h;
 const DOG_RUN_GROUND_Y =
   GROUND_SURFACE + DOG_Y_OFFSET + (DOG_FRAME_H - DOG_HITBOX_BOTTOM) * DOG_SCALE;
 const DOG_SLEEP_Y = DOG_RUN_GROUND_Y + SLEEP_Y_OFFSET;
-const ROCK_HITBOX = {
-  x: 34,
-  y: 52,
-  w: 58,
-  h: 48,
-};
+const ROCK_COLLISION_PAD_X = 6;
+const ROCK_FRAME_HITBOX_W = 50;
+const ROCK_FRAME_HITBOX_H = 78;
+const ROCK_COLLISION_PAD_Y = 4;
 const MUD_HITBOX = {
   x: 24,
   y: 72,
@@ -397,15 +401,58 @@ export default class GameScene extends Phaser.Scene {
   }
 
   setupDogPhysics() {
-    this.dog.body.setSize(DOG_HITBOX.w, DOG_HITBOX.h);
-    this.dog.body.setOffset(DOG_HITBOX.x, DOG_HITBOX.y);
+    this.dog.body.setSize(
+      DOG_HITBOX.w - DOG_HITBOX_INSET.left - DOG_HITBOX_INSET.right,
+      DOG_HITBOX.h - DOG_HITBOX_INSET.top - DOG_HITBOX_INSET.bottom,
+    );
+    this.dog.body.setOffset(
+      DOG_HITBOX.x + DOG_HITBOX_INSET.left,
+      DOG_HITBOX.y + DOG_HITBOX_INSET.top,
+    );
     this.dog.refreshBody();
   }
 
   setupRockPhysics(rock) {
-    rock.body.setSize(ROCK_HITBOX.w, ROCK_HITBOX.h);
-    rock.body.setOffset(ROCK_HITBOX.x, ROCK_HITBOX.y);
+    const sourceW = ROCK_FRAME_HITBOX_W - ROCK_COLLISION_PAD_X * 2;
+    const sourceH = ROCK_FRAME_HITBOX_H;
+
+    rock.body.setSize(sourceW, sourceH);
+    rock.body.setOffset(
+      (rock.frame.width - sourceW) / 2,
+      rock.frame.height - sourceH,
+    );
     rock.refreshBody();
+  }
+
+  isRockHittingDog(rock) {
+    if (!rock.active || !this.dog.body || !rock.body) {
+      return false;
+    }
+
+    const dog = this.dog.body;
+    const rockBody = rock.body;
+    const padX = 2;
+    const padY = ROCK_COLLISION_PAD_Y;
+
+    return (
+      dog.left - padX < rockBody.right + padX &&
+      dog.right + padX > rockBody.left - padX &&
+      dog.top - padY < rockBody.bottom + padY &&
+      dog.bottom + padY > rockBody.top - padY
+    );
+  }
+
+  checkRockCollisions() {
+    if (this.isGameOver || this.hitCooldownMs > 0) {
+      return;
+    }
+
+    for (const rock of this.obstacles.getChildren()) {
+      if (this.isRockHittingDog(rock)) {
+        this.handleCollision(this.dog, rock);
+        return;
+      }
+    }
   }
 
   setupMudPhysics(mud) {
@@ -1388,6 +1435,7 @@ export default class GameScene extends Phaser.Scene {
     });
 
     this.checkHeartPickups();
+    this.checkRockCollisions();
 
     this.dog.x = DOG_X;
     this.dog.setVelocityX(0);
