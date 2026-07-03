@@ -58,7 +58,7 @@ const config = {
     roundPixels: true,
   },
   scale: {
-    mode: Phaser.Scale.FIT,
+    mode: Phaser.Scale.ENVELOP,
     autoCenter: Phaser.Scale.CENTER_BOTH,
     parent: 'game',
     width: 480,

@@ -50,11 +50,12 @@ const MAX_JUMP_VELOCITY = -500;
 const JUMP_HOLD_ACCEL = 1200;
 const JUMP_CUT_FACTOR = 0.5;
 const JUMP_CUT_VELOCITY_THRESHOLD = -80;
-const TAP_THRESHOLD_MS = 150;
-const JUMP_AIR_BOOST_IMPULSE = 0.12;
-const JUMP_AIR_BOOST_VELOCITY_CAP = -500;
+const JUMP_HOLD_DELAY_MS = 0;
+const JUMP_CUT_MIN_HOLD_MS = 150;
+const JUMP_AIR_BOOST_IMPULSE = 0.35;
+const JUMP_AIR_BOOST_VELOCITY_CAP = -580;
 const FALL_JUMP_VELOCITY = -630;
-const FALL_JUMP_MIN_DESCENT_VELOCITY = 80;
+const FALL_JUMP_MIN_DESCENT_VELOCITY = 40;
 const BG_TEXTURE_HEIGHT = 1024;
 const PARALLAX_SKY = 0.3;
 const PARALLAX_GROUND = 1;
@@ -1420,7 +1421,7 @@ export default class GameScene extends Phaser.Scene {
 
   applyJumpPhysics(dt) {
     const rising = this.dog.body.velocity.y < 0;
-    const heldLongEnough = this.time.now - this.jumpPressTime >= TAP_THRESHOLD_MS;
+    const heldLongEnough = this.time.now - this.jumpPressTime >= JUMP_HOLD_DELAY_MS;
     const holdingJump =
       rising && this.isJumpInputHeld() && this.groundJumpActive && heldLongEnough;
 
@@ -1470,7 +1471,7 @@ export default class GameScene extends Phaser.Scene {
     this.coyoteMs = 0;
     this.groundJumpActive = true;
     this.dog.setVelocityY(MIN_JUMP_VELOCITY);
-    this.dog.setGravityY(GRAVITY_RISE);
+    this.dog.setGravityY(GRAVITY_HOLD_RISE);
     this.dog.refreshBody();
     return true;
   }
@@ -1540,7 +1541,7 @@ export default class GameScene extends Phaser.Scene {
     const vy = this.dog.body.velocity.y;
 
     if (
-      heldFor > TAP_THRESHOLD_MS &&
+      heldFor > JUMP_CUT_MIN_HOLD_MS &&
       vy < JUMP_CUT_VELOCITY_THRESHOLD
     ) {
       const cutVelocity = vy * JUMP_CUT_FACTOR;
