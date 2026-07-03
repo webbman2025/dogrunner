@@ -68,7 +68,7 @@ const DOG_HITBOX = {
 };
 const DOG_HITBOX_INSET = {
   left: 6,
-  right: 12,
+  right: 14,
   top: 0,
   bottom: 0,
 };
@@ -78,10 +78,9 @@ const DOG_HITBOX_BOTTOM = DOG_HITBOX.y + DOG_HITBOX.h;
 const DOG_RUN_GROUND_Y =
   GROUND_SURFACE + DOG_Y_OFFSET + (DOG_FRAME_H - DOG_HITBOX_BOTTOM) * DOG_SCALE;
 const DOG_SLEEP_Y = DOG_RUN_GROUND_Y + SLEEP_Y_OFFSET;
-const ROCK_COLLISION_PAD_X = 6;
-const ROCK_FRAME_HITBOX_W = 50;
-const ROCK_FRAME_HITBOX_H = 78;
-const ROCK_COLLISION_PAD_Y = 4;
+// Bottom-anchored texture hitbox covering the poop pile, not flies or side padding.
+const ROCK_FRAME_HITBOX_W = 76;
+const ROCK_FRAME_HITBOX_H = 76;
 const MUD_HITBOX = {
   x: 24,
   y: 72,
@@ -413,15 +412,24 @@ export default class GameScene extends Phaser.Scene {
   }
 
   setupRockPhysics(rock) {
-    const sourceW = ROCK_FRAME_HITBOX_W - ROCK_COLLISION_PAD_X * 2;
-    const sourceH = ROCK_FRAME_HITBOX_H;
-
-    rock.body.setSize(sourceW, sourceH);
+    rock.body.setSize(ROCK_FRAME_HITBOX_W, ROCK_FRAME_HITBOX_H);
     rock.body.setOffset(
-      (rock.frame.width - sourceW) / 2,
-      rock.frame.height - sourceH,
+      (rock.frame.width - ROCK_FRAME_HITBOX_W) / 2,
+      rock.frame.height - ROCK_FRAME_HITBOX_H,
     );
     rock.refreshBody();
+  }
+
+  isDogOnGround() {
+    if (!this.dog?.body) {
+      return false;
+    }
+
+    return (
+      this.dog.body.blocked.down ||
+      this.dog.body.touching.down ||
+      Math.abs(this.dog.y - DOG_RUN_GROUND_Y) <= GROUND_SNAP_TOLERANCE
+    );
   }
 
   isRockHittingDog(rock) {
@@ -431,14 +439,12 @@ export default class GameScene extends Phaser.Scene {
 
     const dog = this.dog.body;
     const rockBody = rock.body;
-    const padX = 2;
-    const padY = ROCK_COLLISION_PAD_Y;
 
     return (
-      dog.left - padX < rockBody.right + padX &&
-      dog.right + padX > rockBody.left - padX &&
-      dog.top - padY < rockBody.bottom + padY &&
-      dog.bottom + padY > rockBody.top - padY
+      dog.left < rockBody.right &&
+      dog.right > rockBody.left &&
+      dog.top < rockBody.bottom &&
+      dog.bottom > rockBody.top
     );
   }
 
@@ -528,13 +534,15 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
-    if (onGround) {
+    const rising = this.dog.body.velocity.y < -30;
+    const grounded = onGround && !rising;
+
+    if (grounded) {
       this.wasAirborne = false;
       this.jumpPhase = null;
 
-      const usingJumpSprite = this.dog.texture.key.startsWith('jump_');
       if (
-        usingJumpSprite ||
+        this.dog.texture.key.startsWith('jump_') ||
         !this.dog.anims.isPlaying ||
         this.dog.anims.currentAnim?.key !== 'run'
       ) {
@@ -542,8 +550,6 @@ export default class GameScene extends Phaser.Scene {
       }
       return;
     }
-
-    const rising = this.dog.body.velocity.y < 0;
     const holdingJump = rising && this.isJumpInputHeld();
 
     if (!this.wasAirborne) {
@@ -1305,8 +1311,6 @@ export default class GameScene extends Phaser.Scene {
     this.mudPatches = this.physics.add.staticGroup();
     this.heartPickups = this.physics.add.staticGroup();
 
-    this.physics.add.overlap(this.dog, this.obstacles, this.handleCollision, null, this);
-
     this.createHeartsHud();
 
     this.scoreText = this.add
@@ -1362,7 +1366,7 @@ export default class GameScene extends Phaser.Scene {
     }
 
     const dt = delta / 1000;
-    const onGround = this.dog.body.blocked.down || this.dog.body.touching.down;
+    const onGround = this.isDogOnGround();
 
     const maxSpeed = 420 * this.speedMultiplier;
     const baseSpeed = BASE_SCROLL_SPEED * this.speedMultiplier;
@@ -1438,7 +1442,6 @@ export default class GameScene extends Phaser.Scene {
     });
 
     this.checkHeartPickups();
-    this.checkRockCollisions();
 
     this.dog.x = DOG_X;
     this.dog.setVelocityX(0);
@@ -1463,7 +1466,8 @@ export default class GameScene extends Phaser.Scene {
     this.wasAirborneLastFrame = !onGround;
 
     this.applyJumpPhysics(dt);
-    this.updateDogAnimation(onGround);
+    this.checkRockCollisions();
+    this.updateDogAnimation(this.isDogOnGround());
   }
 
   isJumpInputHeld() {
@@ -1504,14 +1508,7 @@ export default class GameScene extends Phaser.Scene {
   }
 
   canJump() {
-    const nearGround = Math.abs(this.dog.y - DOG_RUN_GROUND_Y) <= GROUND_SNAP_TOLERANCE;
-
-    return (
-      this.dog.body.blocked.down ||
-      this.dog.body.touching.down ||
-      this.coyoteMs > 0 ||
-      nearGround
-    );
+    return this.isDogOnGround() || this.coyoteMs > 0;
   }
 
   performJump() {
@@ -1521,9 +1518,12 @@ export default class GameScene extends Phaser.Scene {
 
     this.coyoteMs = 0;
     this.groundJumpActive = true;
+    this.wasAirborne = false;
+    this.jumpPhase = 'hold';
     this.dog.setVelocityY(MIN_JUMP_VELOCITY);
     this.dog.setGravityY(GRAVITY_HOLD_RISE);
-    this.dog.refreshBody();
+    this.dog.setTexture('jump_1');
+    this.dog.anims.stop();
     return true;
   }
 
@@ -1568,7 +1568,7 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
-    if (this.coyoteMs > 0 || Math.abs(this.dog.y - DOG_RUN_GROUND_Y) <= GROUND_SNAP_TOLERANCE) {
+    if (this.coyoteMs > 0 || this.isDogOnGround()) {
       this.jumpBuffered = true;
     }
 
