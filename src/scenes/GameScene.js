@@ -1519,11 +1519,17 @@ export default class GameScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true });
 
     this.devPanelBg = this.add
-      .rectangle(10, 42, 250, 254, 0x111827, 0.92)
+      .rectangle(10, 42, 250, 278, 0x111827, 0.92)
       .setOrigin(0, 0)
       .setScrollFactor(0)
       .setDepth(DEV_MENU_DEPTH)
       .setVisible(false);
+
+    const devLabelStyle = {
+      fontFamily: 'Arial, sans-serif',
+      fontSize: '11px',
+      color: '#9ca3af',
+    };
 
     this.devPanel = this.add.container(0, 0).setScrollFactor(0).setDepth(DEV_MENU_DEPTH).setVisible(false);
 
@@ -1560,6 +1566,12 @@ export default class GameScene extends Phaser.Scene {
       }),
     };
 
+    this.cycleLabel = this.add
+      .text(18, 158, 'Day/night cycle', devLabelStyle)
+      .setScrollFactor(0)
+      .setDepth(DEV_MENU_DEPTH + 1)
+      .setVisible(false);
+
     this.cycleButtons = {
       on: this.createDevOption(18, 174, 'On', optionStyle, () => {
         this.setDayNightCycle(true);
@@ -1568,6 +1580,12 @@ export default class GameScene extends Phaser.Scene {
         this.setDayNightCycle(false);
       }),
     };
+
+    this.ghostLabel = this.add
+      .text(18, 198, 'Ghost race', devLabelStyle)
+      .setScrollFactor(0)
+      .setDepth(DEV_MENU_DEPTH + 1)
+      .setVisible(false);
 
     this.ghostButtons = {
       on: this.createDevOption(18, 214, 'On', optionStyle, () => {
@@ -1584,6 +1602,8 @@ export default class GameScene extends Phaser.Scene {
 
     this.devMenuItems = [
       this.devPanelBg,
+      this.cycleLabel,
+      this.ghostLabel,
       ...Object.values(this.weatherButtons),
       ...Object.values(this.dayButtons),
       ...Object.values(this.speedButtons),
@@ -1683,7 +1703,13 @@ export default class GameScene extends Phaser.Scene {
       return false;
     }
 
-    return this.devPanelBg.getBounds().contains(pointer.x, pointer.y);
+    if (this.devPanelBg.getBounds().contains(pointer.x, pointer.y)) {
+      return true;
+    }
+
+    return this.devMenuItems.some(
+      (item) => item?.active && item !== this.devPanelBg && item.getBounds?.()?.contains(pointer.x, pointer.y),
+    );
   }
 
   bindInputHandlers() {
