@@ -151,8 +151,14 @@ const DAY_NIGHT_FADE_RANGE = 350;
 const DAY_OVERLAY_LERP_SPEED = 4;
 
 const GHOST_RACE_ENABLED = true;
-const GHOST_STORAGE_KEY = 'dogrunner-ghost-best-v3';
-const GHOST_FORMAT_VERSION = 3;
+const GHOST_LIBRARY_KEY = 'dogrunner-ghost-library-v4';
+const GHOST_LIBRARY_VERSION = 4;
+const GHOST_LEGACY_KEYS = [
+  'dogrunner-ghost-best-v3',
+  'dogrunner-ghost-best-v2',
+  'dogrunner-ghost-best',
+];
+const GHOST_MAX_SAVED = 10;
 const GHOST_HIT_RUN_SCALE = 0.45;
 const GHOST_FADE_MS = 900;
 const GHOST_SAMPLE_INTERVAL_MS = 150;
@@ -162,13 +168,23 @@ const GHOST_X_SHIFT_PER_SCORE = 0.35;
 const GHOST_X_MIN = 40;
 const GHOST_X_MAX = 160;
 const GHOST_DEPTH = -0.5;
+const MODAL_DIMMER_DEPTH = 50;
+const MODAL_CONTENT_DEPTH = 51;
+const MODAL_FONT =
+  'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif';
+const GHOST_LIB_PANEL_W = 400;
+const GHOST_LIB_PANEL_H = 648;
+const POST_RACE_PANEL_W = 400;
+const POST_RACE_PANEL_H = 430;
+const SAVE_MODAL_PANEL_W = 400;
+const SAVE_MODAL_PANEL_H = 430;
 
 export default class GameScene extends Phaser.Scene {
   static devWeather = WEATHER_MODES.DRY;
   static devDay = DAY_MODES.DAY;
   static devDayNightCycle = 'on';
   static devSpeed = 'fast';
-  static devGhostRace = 'on';
+  static devGhostRace = 'off';
 
   constructor() {
     super('GameScene');
@@ -341,6 +357,53 @@ export default class GameScene extends Phaser.Scene {
       yoyo: true,
       repeat: -1,
     });
+
+    this.createPreRaceGhostButton();
+  }
+
+  createPreRaceGhostButton() {
+    const library = this.ghostLibrary ?? this.loadGhostLibrary();
+    const count = library.replays.length;
+    const selected = this.getSelectedGhostReplay(library);
+    const label =
+      count === 0
+        ? 'Ghost races'
+        : selected
+          ? `Ghost: ${selected.finalScore}m`
+          : 'Ghost: off';
+
+    this.preRaceGhostButton = this.add
+      .container(WIDTH / 2, TAP_TO_START_Y + 58)
+      .setScrollFactor(0)
+      .setDepth(HEARTS_DEPTH + 2);
+
+    const btnW = 220;
+    const btnH = 42;
+    const btnBg = this.add.graphics();
+    this.paintRoundedRect(btnBg, -btnW / 2, -btnH / 2, btnW, btnH, btnH / 2, 0x0f172a, 0.88, 0x38bdf8, 0.45, 1.5);
+
+    this.preRaceGhostLabel = this.add
+      .text(0, 0, label, {
+        fontFamily: MODAL_FONT,
+        fontSize: '15px',
+        fontStyle: 'bold',
+        color: '#e0f2fe',
+      })
+      .setOrigin(0.5);
+
+    const btnZone = this.add.zone(0, 0, btnW, btnH).setInteractive({ useHandCursor: true });
+    btnZone.on('pointerover', () => {
+      this.paintRoundedRect(btnBg, -btnW / 2, -btnH / 2, btnW, btnH, btnH / 2, 0x172554, 0.95, 0x7dd3fc, 0.8, 1.5);
+    });
+    btnZone.on('pointerout', () => {
+      this.paintRoundedRect(btnBg, -btnW / 2, -btnH / 2, btnW, btnH, btnH / 2, 0x0f172a, 0.88, 0x38bdf8, 0.45, 1.5);
+    });
+    btnZone.on('pointerdown', (pointer, _x, _y, event) => {
+      event?.stopPropagation();
+      this.openGhostLibraryModal('preRace');
+    });
+
+    this.preRaceGhostButton.add([btnBg, this.preRaceGhostLabel, btnZone]);
   }
 
   startGameplay() {
@@ -355,6 +418,13 @@ export default class GameScene extends Phaser.Scene {
       this.tapToStartText.destroy();
       this.tapToStartText = null;
     }
+
+    if (this.preRaceGhostButton) {
+      this.preRaceGhostButton.destroy();
+      this.preRaceGhostButton = null;
+    }
+
+    this.hideAllRaceModals();
 
     const now = this.time.now;
     this.ghostRunStartTime = now;
@@ -559,60 +629,242 @@ export default class GameScene extends Phaser.Scene {
     );
   }
 
-  loadGhostBest() {
-    if (!GHOST_RACE_ENABLED) {
+  generateGhostId() {
+    return `ghost-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  formatGhostDate(savedAt) {
+    if (!savedAt) {
+      return 'Unknown date';
+    }
+
+    return new Date(savedAt).toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  }
+
+  formatGhostDuration(durationMs) {
+    const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  }
+
+  isValidGhostReplay(replay) {
+    return (
+      replay &&
+      typeof replay.finalScore === 'number' &&
+      Array.isArray(replay.samples) &&
+      replay.samples.length >= 2 &&
+      typeof replay.samples[0].runScale === 'number' &&
+      typeof replay.samples[0].hearts === 'number'
+    );
+  }
+
+  normalizeGhostReplay(replay) {
+    if (!this.isValidGhostReplay(replay)) {
       return null;
+    }
+
+    return {
+      id: replay.id || this.generateGhostId(),
+      finalScore: replay.finalScore,
+      durationMs: replay.durationMs ?? 0,
+      deathT: replay.deathT ?? this.findGhostDeathTime(replay.samples),
+      savedAt: replay.savedAt ?? Date.now(),
+      samples: replay.samples,
+    };
+  }
+
+  createEmptyGhostLibrary() {
+    return {
+      v: GHOST_LIBRARY_VERSION,
+      selectedId: null,
+      replays: [],
+    };
+  }
+
+  migrateLegacyGhostLibrary() {
+    for (const key of GHOST_LEGACY_KEYS) {
+      try {
+        const raw = localStorage.getItem(key);
+        if (!raw) {
+          continue;
+        }
+
+        const data = JSON.parse(raw);
+        const replay = this.normalizeGhostReplay({
+          id: this.generateGhostId(),
+          finalScore: data.finalScore,
+          durationMs: data.durationMs,
+          deathT: data.deathT,
+          savedAt: Date.now(),
+          samples: data.samples,
+        });
+
+        if (!replay) {
+          continue;
+        }
+
+        const library = this.createEmptyGhostLibrary();
+        library.replays = [replay];
+        library.selectedId = replay.id;
+        this.saveGhostLibrary(library);
+        localStorage.removeItem(key);
+        return library;
+      } catch {
+        // Try next legacy key.
+      }
+    }
+
+    return null;
+  }
+
+  loadGhostLibrary() {
+    if (!GHOST_RACE_ENABLED) {
+      return this.createEmptyGhostLibrary();
     }
 
     try {
-      const raw = localStorage.getItem(GHOST_STORAGE_KEY);
+      const raw = localStorage.getItem(GHOST_LIBRARY_KEY);
       if (!raw) {
-        return null;
+        return this.migrateLegacyGhostLibrary() ?? this.createEmptyGhostLibrary();
       }
 
       const data = JSON.parse(raw);
-      if (
-        !data ||
-        data.v !== GHOST_FORMAT_VERSION ||
-        typeof data.finalScore !== 'number' ||
-        !Array.isArray(data.samples) ||
-        data.samples.length < 2 ||
-        typeof data.samples[0].runScale !== 'number' ||
-        typeof data.samples[0].hearts !== 'number'
-      ) {
-        return null;
+      if (!data || data.v !== GHOST_LIBRARY_VERSION || !Array.isArray(data.replays)) {
+        return this.migrateLegacyGhostLibrary() ?? this.createEmptyGhostLibrary();
       }
 
-      return data;
+      const replays = data.replays
+        .map((replay) => this.normalizeGhostReplay(replay))
+        .filter(Boolean)
+        .sort((a, b) => b.savedAt - a.savedAt)
+        .slice(0, GHOST_MAX_SAVED);
+
+      const selectedId = replays.some((replay) => replay.id === data.selectedId)
+        ? data.selectedId
+        : replays[0]?.id ?? null;
+
+      return {
+        v: GHOST_LIBRARY_VERSION,
+        selectedId,
+        replays,
+      };
     } catch {
-      return null;
+      return this.createEmptyGhostLibrary();
     }
   }
 
-  saveGhostBest(data) {
-    if (!GHOST_RACE_ENABLED || !data?.samples?.length) {
+  saveGhostLibrary(library) {
+    if (!GHOST_RACE_ENABLED || !library) {
       return;
     }
 
     try {
-      localStorage.setItem(GHOST_STORAGE_KEY, JSON.stringify(data));
+      localStorage.setItem(GHOST_LIBRARY_KEY, JSON.stringify(library));
     } catch {
       // Ignore quota / private-mode storage errors.
     }
   }
 
-  clearGhostBest() {
+  getSelectedGhostReplay(library = this.ghostLibrary) {
+    if (!library?.selectedId) {
+      return null;
+    }
+
+    return library.replays.find((replay) => replay.id === library.selectedId) ?? null;
+  }
+
+  setSelectedGhostReplay(replayId) {
+    if (!this.ghostLibrary) {
+      return;
+    }
+
+    this.ghostLibrary.selectedId = replayId;
+    this.saveGhostLibrary(this.ghostLibrary);
+    this.refreshPreRaceGhostButton();
+  }
+
+  addGhostReplayToLibrary(replay) {
+    const normalized = this.normalizeGhostReplay(replay);
+    if (!normalized) {
+      return false;
+    }
+
+    if (!this.ghostLibrary) {
+      this.ghostLibrary = this.createEmptyGhostLibrary();
+    }
+
+    this.ghostLibrary.replays = [
+      normalized,
+      ...this.ghostLibrary.replays.filter((entry) => entry.id !== normalized.id),
+    ]
+      .sort((a, b) => b.savedAt - a.savedAt)
+      .slice(0, GHOST_MAX_SAVED);
+
+    this.ghostLibrary.selectedId = normalized.id;
+    this.saveGhostLibrary(this.ghostLibrary);
+    this.refreshPreRaceGhostButton();
+    return true;
+  }
+
+  clearGhostLibrary() {
     try {
-      localStorage.removeItem(GHOST_STORAGE_KEY);
-      localStorage.removeItem('dogrunner-ghost-best');
-      localStorage.removeItem('dogrunner-ghost-best-v2');
+      localStorage.removeItem(GHOST_LIBRARY_KEY);
+      for (const key of GHOST_LEGACY_KEYS) {
+        localStorage.removeItem(key);
+      }
     } catch {
       // Ignore storage errors.
     }
 
-    this.ghostBest = null;
+    this.ghostLibrary = this.createEmptyGhostLibrary();
     this.ghostBestAtRunStart = null;
     this.ghostDog?.setVisible(false);
+    this.refreshPreRaceGhostButton();
+  }
+
+  clearGhostBest() {
+    this.clearGhostLibrary();
+  }
+
+  refreshPreRaceGhostButton() {
+    if (!this.preRaceGhostButton || this.hasStarted) {
+      return;
+    }
+
+    const library = this.ghostLibrary ?? this.loadGhostLibrary();
+    const selected = this.getSelectedGhostReplay(library);
+    const label =
+      library.replays.length === 0
+        ? 'Ghost races'
+        : selected
+          ? `Ghost: ${selected.finalScore}m`
+          : 'Ghost: off';
+    this.preRaceGhostLabel.setText(label);
+  }
+
+  snapshotGhostForRunStart(replay) {
+    if (!replay) {
+      return null;
+    }
+
+    return {
+      id: replay.id,
+      finalScore: replay.finalScore,
+      deathT: replay.deathT ?? this.findGhostDeathTime(replay.samples),
+      samples: [...replay.samples],
+    };
+  }
+
+  applyGhostLibraryForNewRun() {
+    this.ghostLibrary = this.loadGhostLibrary();
+    const selected = this.getSelectedGhostReplay(this.ghostLibrary);
+    this.ghostBestAtRunStart = this.snapshotGhostForRunStart(selected);
   }
 
   setGhostRace(enabled) {
@@ -889,29 +1141,39 @@ export default class GameScene extends Phaser.Scene {
     this.updateGhostVisual(ghostTex, ghostRunScale);
   }
 
-  finalizeGhostRecording(time) {
+  buildPendingRunRecording(time) {
     if (!this.isGhostRaceActive() || !this.hasStarted) {
-      return;
+      return null;
     }
 
     this.recordGhostSample(time);
 
     const recording = {
-      v: GHOST_FORMAT_VERSION,
       finalScore: Math.floor(this.score),
       durationMs: Math.max(0, time - this.ghostRunStartTime),
       deathT: this.findGhostDeathTime(this.ghostRunSamples),
-      samples: this.ghostRunSamples,
+      samples: [...this.ghostRunSamples],
     };
 
     if (recording.samples.length < 2) {
-      return;
+      return null;
     }
 
-    if (!this.ghostBest || recording.finalScore >= this.ghostBest.finalScore) {
-      this.saveGhostBest(recording);
-      this.ghostBest = recording;
+    return recording;
+  }
+
+  savePendingRunRecording() {
+    if (!this.pendingRunRecording) {
+      return false;
     }
+
+    const replay = {
+      id: this.generateGhostId(),
+      savedAt: Date.now(),
+      ...this.pendingRunRecording,
+    };
+
+    return this.addGhostReplayToLibrary(replay);
   }
 
   updateDogAnimation(onGround) {
@@ -1385,17 +1647,20 @@ export default class GameScene extends Phaser.Scene {
 
   bindInputHandlers() {
     this.onPointerDown = (pointer) => {
-      if (this.isPointerOverDevMenu(pointer)) {
+      if (this.isPointerOverDevMenu(pointer) || this.isPointerOverRaceUi(pointer)) {
         return;
       }
 
       if (!this.hasStarted) {
+        if (this.ghostLibraryModal?.visible || this.saveGhostModal?.visible) {
+          return;
+        }
+
         this.startGameplay();
         return;
       }
 
       if (this.isGameOver) {
-        this.scene.restart();
         return;
       }
 
@@ -1682,15 +1947,13 @@ export default class GameScene extends Phaser.Scene {
     this.wasAirborne = false;
     this.jumpPhase = null;
 
-    this.ghostBest = this.loadGhostBest();
-    this.ghostBestAtRunStart = this.ghostBest
-      ? {
-          finalScore: this.ghostBest.finalScore,
-          deathT:
-            this.ghostBest.deathT ?? this.findGhostDeathTime(this.ghostBest.samples),
-          samples: [...this.ghostBest.samples],
-        }
-      : null;
+    this.ghostLibrary = this.loadGhostLibrary();
+    this.applyGhostLibraryForNewRun();
+    this.pendingRunRecording = null;
+    this.modalReturnTarget = null;
+    this.postRaceMenu = null;
+    this.saveGhostModal = null;
+    this.ghostLibraryModal = null;
     this.ghostRunSamples = [];
     this.ghostRunStartTime = 0;
     this.lastGhostSampleTime = 0;
@@ -2043,6 +2306,739 @@ export default class GameScene extends Phaser.Scene {
     return DOG_SLEEP_Y;
   }
 
+  formatGhostDateParts(savedAt) {
+    if (!savedAt) {
+      return { date: '—', time: '—' };
+    }
+
+    const value = new Date(savedAt);
+    return {
+      date: value.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }),
+      time: value.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }),
+    };
+  }
+
+  paintRoundedRect(
+    graphics,
+    x,
+    y,
+    width,
+    height,
+    radius,
+    fill,
+    fillAlpha = 1,
+    stroke,
+    strokeAlpha = 1,
+    lineWidth = 2,
+  ) {
+    graphics.clear();
+    graphics.fillStyle(fill, fillAlpha);
+    graphics.fillRoundedRect(x, y, width, height, radius);
+    if (stroke !== undefined && stroke !== null) {
+      graphics.lineStyle(lineWidth, stroke, strokeAlpha);
+      graphics.strokeRoundedRect(x, y, width, height, radius);
+    }
+  }
+
+  createModernButton(parent, x, y, width, label, variant, onSelect) {
+    const styles = {
+      primary: { bg: 0x2563eb, hover: 0x3b82f6, text: '#ffffff', border: null },
+      secondary: { bg: 0x1e293b, hover: 0x334155, text: '#e2e8f0', border: 0x475569 },
+      ghost: { bg: 0x0f172a, hover: 0x1e293b, text: '#cbd5e1', border: 0x334155 },
+      success: { bg: 0x059669, hover: 0x10b981, text: '#ffffff', border: null },
+    };
+    const style = styles[variant] ?? styles.secondary;
+    const height = 46;
+    const container = this.add.container(x, y);
+    container.setScrollFactor(0);
+    const bg = this.add.graphics();
+    const draw = (color) => {
+      this.paintRoundedRect(
+        bg,
+        -width / 2,
+        -height / 2,
+        width,
+        height,
+        height / 2,
+        color,
+        1,
+        style.border,
+        1,
+        style.border ? 1.5 : 0,
+      );
+    };
+
+    draw(style.bg);
+    const text = this.add
+      .text(0, 0, label, {
+        fontFamily: MODAL_FONT,
+        fontSize: '15px',
+        fontStyle: 'bold',
+        color: style.text,
+      })
+      .setOrigin(0.5);
+
+    const zone = this.add
+      .zone(0, 0, width, height)
+      .setInteractive({ useHandCursor: true })
+      .setScrollFactor(0);
+    zone.on('pointerover', () => draw(style.hover));
+    zone.on('pointerout', () => draw(style.bg));
+    zone.on('pointerdown', (_pointer, _x, _y, event) => {
+      event?.stopPropagation();
+      onSelect();
+    });
+
+    container.add([bg, text, zone]);
+    parent.add(container);
+    return container;
+  }
+
+  createModalButton(x, y, label, color, onSelect) {
+    const variant =
+      color === '#15803d' || color === '#059669' ? 'success' : color === '#374151' ? 'ghost' : 'primary';
+    const container = this.add.container(x, y).setScrollFactor(0).setDepth(MODAL_CONTENT_DEPTH);
+    return this.createModernButton(container, 0, 0, 320, label, variant, onSelect);
+  }
+
+  hideAllRaceModals() {
+    this.postRaceMenu?.setVisible(false);
+    this.saveGhostModal?.setVisible(false);
+    this.ghostLibraryModal?.setVisible(false);
+    this.modalDimmer?.setVisible(false);
+  }
+
+  ensureModalDimmer() {
+    if (!this.modalDimmer) {
+      this.modalDimmer = this.add
+        .rectangle(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, 0x020617, 0.72)
+        .setScrollFactor(0)
+        .setDepth(MODAL_DIMMER_DEPTH)
+        .setVisible(false);
+    }
+
+    return this.modalDimmer;
+  }
+
+  createGhostReplayCard(replay, y, rowWidth, rowHeight, selected, onSelect) {
+    const card = this.add.container(0, y + rowHeight / 2);
+    const cardW = rowWidth;
+    const cardH = rowHeight - 8;
+    const parts = this.formatGhostDateParts(replay.savedAt);
+    const bg = this.add.graphics();
+    const accent = this.add.graphics();
+
+    const paintCard = (hover = false) => {
+      const fill = selected ? 0x172554 : hover ? 0x1e293b : 0x111827;
+      const stroke = selected ? 0x38bdf8 : 0x273449;
+      this.paintRoundedRect(bg, -cardW / 2, -cardH / 2, cardW, cardH, 14, fill, 0.98, stroke, selected ? 1 : 0.9, selected ? 2 : 1);
+      accent.clear();
+      if (selected) {
+        accent.fillStyle(0x38bdf8, 1);
+        accent.fillRoundedRect(-cardW / 2, -cardH / 2 + 8, 4, cardH - 16, 2);
+      }
+    };
+
+    paintCard();
+
+    const distanceText = this.add
+      .text(-cardW / 2 + 22, -6, `${replay.finalScore} m`, {
+        fontFamily: MODAL_FONT,
+        fontSize: '22px',
+        fontStyle: 'bold',
+        color: selected ? '#7dd3fc' : '#f8fafc',
+      })
+      .setOrigin(0, 0.5);
+
+    const dateText = this.add
+      .text(-cardW / 2 + 22, 14, parts.date, {
+        fontFamily: MODAL_FONT,
+        fontSize: '12px',
+        color: '#94a3b8',
+      })
+      .setOrigin(0, 0.5);
+
+    const timeText = this.add
+      .text(-cardW / 2 + 22 + dateText.width + 10, 14, parts.time, {
+        fontFamily: MODAL_FONT,
+        fontSize: '12px',
+        color: '#64748b',
+      })
+      .setOrigin(0, 0.5);
+
+    const durationBg = this.add.graphics();
+    const durationLabel = this.formatGhostDuration(replay.durationMs);
+    const pillW = Math.max(52, durationLabel.length * 8 + 20);
+    this.paintRoundedRect(durationBg, cardW / 2 - pillW - 14, -12, pillW, 24, 12, 0x0f172a, 1, 0x334155, 1, 1);
+    const durationText = this.add
+      .text(cardW / 2 - pillW / 2 - 14, 0, durationLabel, {
+        fontFamily: MODAL_FONT,
+        fontSize: '12px',
+        fontStyle: 'bold',
+        color: '#cbd5e1',
+      })
+      .setOrigin(0.5);
+
+    const zone = this.add.zone(0, 0, cardW, cardH).setInteractive({ useHandCursor: true });
+    zone.on('pointerover', () => paintCard(true));
+    zone.on('pointerout', () => paintCard(false));
+    zone.on('pointerdown', (_pointer, _x, _y, event) => {
+      event?.stopPropagation();
+      onSelect();
+    });
+
+    card.add([bg, accent, distanceText, dateText, timeText, durationBg, durationText, zone]);
+    return card;
+  }
+
+  showPostRaceMenu() {
+    this.hideAllRaceModals();
+    const dimmer = this.ensureModalDimmer();
+    dimmer.setVisible(true);
+    dimmer.setDepth(MODAL_DIMMER_DEPTH);
+
+    if (!this.postRaceMenu) {
+      const pw = POST_RACE_PANEL_W;
+      const ph = POST_RACE_PANEL_H;
+
+      this.postRaceMenu = this.add
+        .container(WIDTH / 2, HEIGHT / 2)
+        .setScrollFactor(0)
+        .setDepth(MODAL_CONTENT_DEPTH);
+
+      this.postRacePanelBg = this.add.graphics();
+      this.paintRoundedRect(
+        this.postRacePanelBg,
+        -pw / 2,
+        -ph / 2,
+        pw,
+        ph,
+        28,
+        0x0b1220,
+        0.98,
+        0x334155,
+        0.85,
+        1.5,
+      );
+
+      this.postRaceTitleText = this.add
+        .text(0, -ph / 2 + 40, 'Game Over', {
+          fontFamily: MODAL_FONT,
+          fontSize: '28px',
+          fontStyle: 'bold',
+          color: '#f8fafc',
+        })
+        .setOrigin(0.5);
+
+      this.postRaceScoreText = this.add
+        .text(0, -ph / 2 + 88, '', {
+          fontFamily: MODAL_FONT,
+          fontSize: '48px',
+          fontStyle: 'bold',
+          color: '#7dd3fc',
+        })
+        .setOrigin(0.5);
+
+      this.postRaceSubText = this.add
+        .text(0, -ph / 2 + 132, '', {
+          fontFamily: MODAL_FONT,
+          fontSize: '15px',
+          color: '#94a3b8',
+          align: 'center',
+          wordWrap: { width: pw - 48 },
+        })
+        .setOrigin(0.5, 0);
+
+      this.postRaceContinueButton = this.createModernButton(
+        this.postRaceMenu,
+        0,
+        ph / 2 - 148,
+        320,
+        'Continue',
+        'primary',
+        () => this.scene.restart(),
+      );
+      this.postRaceSaveButton = this.createModernButton(
+        this.postRaceMenu,
+        0,
+        ph / 2 - 92,
+        320,
+        'Save ghost race',
+        'success',
+        () => this.openSaveGhostModal(),
+      );
+      this.postRaceLibraryButton = this.createModernButton(
+        this.postRaceMenu,
+        0,
+        ph / 2 - 36,
+        320,
+        'Ghost library',
+        'secondary',
+        () => this.openGhostLibraryModal('postRace'),
+      );
+
+      this.postRaceMenu.add([
+        this.postRacePanelBg,
+        this.postRaceTitleText,
+        this.postRaceScoreText,
+        this.postRaceSubText,
+      ]);
+    }
+
+    const beatGhost =
+      this.ghostBestAtRunStart &&
+      Math.floor(this.score) > this.ghostBestAtRunStart.finalScore;
+    const canSave = Boolean(this.pendingRunRecording);
+
+    this.postRaceScoreText.setText(`${Math.floor(this.score)}m`);
+    this.postRaceSubText.setText(
+      beatGhost
+        ? `You beat your ghost (${this.ghostBestAtRunStart.finalScore}m)!`
+        : this.ghostBestAtRunStart
+          ? `Ghost raced: ${this.ghostBestAtRunStart.finalScore}m`
+          : canSave
+            ? 'Save this run as a ghost snapshot.'
+            : 'Run too short to save as ghost.',
+    );
+
+    this.postRaceSaveButton.setVisible(canSave);
+
+    this.postRaceMenu.setDepth(MODAL_CONTENT_DEPTH);
+    this.postRaceMenu.setVisible(true);
+    this.children.bringToTop(dimmer);
+    this.children.bringToTop(this.postRaceMenu);
+  }
+
+  openSaveGhostModal() {
+    if (!this.pendingRunRecording) {
+      return;
+    }
+
+    this.hideAllRaceModals();
+    const dimmer = this.ensureModalDimmer();
+    dimmer.setVisible(true);
+
+    if (!this.saveGhostModal) {
+      this.saveGhostModal = this.add
+        .container(WIDTH / 2, HEIGHT / 2)
+        .setScrollFactor(0)
+        .setDepth(MODAL_CONTENT_DEPTH);
+
+      const pw = SAVE_MODAL_PANEL_W;
+      const ph = SAVE_MODAL_PANEL_H;
+
+      this.saveGhostPanelBg = this.add.graphics();
+      this.paintRoundedRect(
+        this.saveGhostPanelBg,
+        -pw / 2,
+        -ph / 2,
+        pw,
+        ph,
+        28,
+        0x0b1220,
+        0.96,
+        0x334155,
+        0.85,
+        1.5,
+      );
+
+      this.saveGhostTitle = this.add
+        .text(0, -ph / 2 + 36, 'Save ghost race?', {
+          fontFamily: MODAL_FONT,
+          fontSize: '24px',
+          fontStyle: 'bold',
+          color: '#f8fafc',
+        })
+        .setOrigin(0.5);
+
+      this.saveGhostSubtitle = this.add
+        .text(0, -ph / 2 + 64, 'Compare with your current ghost', {
+          fontFamily: MODAL_FONT,
+          fontSize: '13px',
+          color: '#94a3b8',
+        })
+        .setOrigin(0.5);
+
+      const cardW = 168;
+      const cardH = 132;
+      this.saveRunCard = this.add.container(-90, -12);
+      this.saveRunCardBg = this.add.graphics();
+      this.paintRoundedRect(
+        this.saveRunCardBg,
+        -cardW / 2,
+        -cardH / 2,
+        cardW,
+        cardH,
+        16,
+        0x052e16,
+        0.55,
+        0x34d399,
+        0.7,
+        1.5,
+      );
+      this.saveRunCardTag = this.add
+        .text(0, -cardH / 2 + 18, 'THIS RUN', {
+          fontFamily: MODAL_FONT,
+          fontSize: '11px',
+          fontStyle: 'bold',
+          color: '#6ee7b7',
+          letterSpacing: 1.2,
+        })
+        .setOrigin(0.5);
+      this.saveRunDistance = this.add
+        .text(0, -8, '', {
+          fontFamily: MODAL_FONT,
+          fontSize: '30px',
+          fontStyle: 'bold',
+          color: '#ecfdf5',
+        })
+        .setOrigin(0.5);
+      this.saveRunMeta = this.add
+        .text(0, 28, '', {
+          fontFamily: MODAL_FONT,
+          fontSize: '12px',
+          color: '#a7f3d0',
+          align: 'center',
+          wordWrap: { width: cardW - 20 },
+        })
+        .setOrigin(0.5);
+      this.saveRunCard.add([
+        this.saveRunCardBg,
+        this.saveRunCardTag,
+        this.saveRunDistance,
+        this.saveRunMeta,
+      ]);
+
+      this.saveVsCard = this.add.container(90, -12);
+      this.saveVsCardBg = this.add.graphics();
+      this.paintRoundedRect(
+        this.saveVsCardBg,
+        -cardW / 2,
+        -cardH / 2,
+        cardW,
+        cardH,
+        16,
+        0x111827,
+        0.95,
+        0x334155,
+        1,
+        1.5,
+      );
+      this.saveVsCardTag = this.add
+        .text(0, -cardH / 2 + 18, 'CURRENT GHOST', {
+          fontFamily: MODAL_FONT,
+          fontSize: '11px',
+          fontStyle: 'bold',
+          color: '#94a3b8',
+          letterSpacing: 1.2,
+        })
+        .setOrigin(0.5);
+      this.saveVsDistance = this.add
+        .text(0, -8, '', {
+          fontFamily: MODAL_FONT,
+          fontSize: '30px',
+          fontStyle: 'bold',
+          color: '#f8fafc',
+        })
+        .setOrigin(0.5);
+      this.saveVsMeta = this.add
+        .text(0, 28, '', {
+          fontFamily: MODAL_FONT,
+          fontSize: '12px',
+          color: '#94a3b8',
+          align: 'center',
+          wordWrap: { width: cardW - 20 },
+        })
+        .setOrigin(0.5);
+      this.saveVsCard.add([this.saveVsCardBg, this.saveVsCardTag, this.saveVsDistance, this.saveVsMeta]);
+
+      this.saveGhostSlotsBg = this.add.graphics();
+      this.saveGhostSlotsFill = this.add.graphics();
+      this.saveGhostSlotsText = this.add
+        .text(0, 108, '', {
+          fontFamily: MODAL_FONT,
+          fontSize: '12px',
+          color: '#94a3b8',
+        })
+        .setOrigin(0.5);
+
+      this.saveGhostConfirmButton = this.createModernButton(
+        this.saveGhostModal,
+        -92,
+        ph / 2 - 42,
+        156,
+        'Save',
+        'success',
+        () => {
+          this.savePendingRunRecording();
+          this.openGhostLibraryModal('postRace');
+        },
+      );
+      this.saveGhostCancelButton = this.createModernButton(
+        this.saveGhostModal,
+        92,
+        ph / 2 - 42,
+        156,
+        'Back',
+        'secondary',
+        () => this.showPostRaceMenu(),
+      );
+
+      this.saveGhostModal.add([
+        this.saveGhostPanelBg,
+        this.saveGhostTitle,
+        this.saveGhostSubtitle,
+        this.saveRunCard,
+        this.saveVsCard,
+        this.saveGhostSlotsBg,
+        this.saveGhostSlotsFill,
+        this.saveGhostSlotsText,
+      ]);
+    }
+
+    const run = this.pendingRunRecording;
+    const selected = this.getSelectedGhostReplay();
+    const runParts = this.formatGhostDateParts(Date.now());
+    const barW = 320;
+    const filled = this.ghostLibrary.replays.length / GHOST_MAX_SAVED;
+
+    this.saveRunDistance.setText(`${run.finalScore}m`);
+    this.saveRunMeta.setText(`${runParts.date}\n${runParts.time} · ${this.formatGhostDuration(run.durationMs)}`);
+
+    if (selected) {
+      const ghostParts = this.formatGhostDateParts(selected.savedAt);
+      this.saveVsDistance.setText(`${selected.finalScore}m`);
+      this.saveVsMeta.setText(`${ghostParts.date}\n${ghostParts.time} · ${this.formatGhostDuration(selected.durationMs)}`);
+    } else {
+      this.saveVsDistance.setText('—');
+      this.saveVsMeta.setText('No ghost selected\nWill become active ghost');
+    }
+
+    this.paintRoundedRect(this.saveGhostSlotsBg, -barW / 2, 88, barW, 8, 4, 0x1e293b, 1, null);
+    this.paintRoundedRect(
+      this.saveGhostSlotsFill,
+      -barW / 2,
+      88,
+      Math.max(12, barW * filled),
+      8,
+      4,
+      0x38bdf8,
+      1,
+      null,
+    );
+    this.saveGhostSlotsText.setText(`${this.ghostLibrary.replays.length} of ${GHOST_MAX_SAVED} snapshots used`);
+    this.saveGhostModal.setDepth(MODAL_CONTENT_DEPTH);
+    this.saveGhostModal.setVisible(true);
+    this.children.bringToTop(dimmer);
+    this.children.bringToTop(this.saveGhostModal);
+  }
+
+  destroyGhostLibraryRows() {
+    if (this.ghostLibraryList) {
+      this.ghostLibraryList.removeAll(true);
+    }
+
+    this.ghostLibraryRows = [];
+  }
+
+  openGhostLibraryModal(returnTarget = 'postRace') {
+    this.modalReturnTarget = returnTarget;
+    this.hideAllRaceModals();
+    const dimmer = this.ensureModalDimmer();
+    dimmer.setVisible(true);
+
+    if (!this.ghostLibraryModal) {
+      const pw = GHOST_LIB_PANEL_W;
+      const ph = GHOST_LIB_PANEL_H;
+
+      this.ghostLibraryModal = this.add
+        .container(WIDTH / 2, HEIGHT / 2)
+        .setScrollFactor(0)
+        .setDepth(MODAL_CONTENT_DEPTH);
+
+      this.ghostLibraryPanelBg = this.add.graphics();
+      this.paintRoundedRect(
+        this.ghostLibraryPanelBg,
+        -pw / 2,
+        -ph / 2,
+        pw,
+        ph,
+        28,
+        0x0b1220,
+        0.96,
+        0x334155,
+        0.85,
+        1.5,
+      );
+
+      this.ghostLibraryTitle = this.add
+        .text(-pw / 2 + 28, -ph / 2 + 30, 'Ghost Races', {
+          fontFamily: MODAL_FONT,
+          fontSize: '24px',
+          fontStyle: 'bold',
+          color: '#f8fafc',
+        })
+        .setOrigin(0, 0.5);
+
+      this.ghostLibraryBadgeBg = this.add.graphics();
+      this.ghostLibraryBadge = this.add
+        .text(pw / 2 - 28, -ph / 2 + 30, '', {
+          fontFamily: MODAL_FONT,
+          fontSize: '12px',
+          fontStyle: 'bold',
+          color: '#bae6fd',
+        })
+        .setOrigin(1, 0.5);
+
+      this.ghostLibraryHint = this.add
+        .text(-pw / 2 + 28, -ph / 2 + 58, 'Select a snapshot to race against', {
+          fontFamily: MODAL_FONT,
+          fontSize: '13px',
+          color: '#94a3b8',
+        })
+        .setOrigin(0, 0.5);
+
+      this.ghostLibraryList = this.add.container(0, -ph / 2 + 112);
+      this.ghostLibraryRows = [];
+
+      this.ghostLibraryNoGhostButton = this.createModernButton(
+        this.ghostLibraryModal,
+        -92,
+        ph / 2 - 42,
+        156,
+        'No ghost',
+        'ghost',
+        () => {
+          this.setSelectedGhostReplay(null);
+          this.refreshGhostLibraryModal();
+        },
+      );
+      this.ghostLibraryBackButton = this.createModernButton(
+        this.ghostLibraryModal,
+        92,
+        ph / 2 - 42,
+        156,
+        'Done',
+        'primary',
+        () => {
+          if (this.modalReturnTarget === 'postRace' && this.isGameOver) {
+            this.showPostRaceMenu();
+          } else {
+            this.hideAllRaceModals();
+          }
+        },
+      );
+
+      this.ghostLibraryModal.add([
+        this.ghostLibraryPanelBg,
+        this.ghostLibraryTitle,
+        this.ghostLibraryBadgeBg,
+        this.ghostLibraryBadge,
+        this.ghostLibraryHint,
+        this.ghostLibraryList,
+      ]);
+    }
+
+    this.refreshGhostLibraryModal();
+    this.ghostLibraryModal.setDepth(MODAL_CONTENT_DEPTH);
+    this.ghostLibraryModal.setVisible(true);
+    this.children.bringToTop(dimmer);
+    this.children.bringToTop(this.ghostLibraryModal);
+  }
+
+  refreshGhostLibraryModal() {
+    if (!this.ghostLibraryList) {
+      return;
+    }
+
+    this.destroyGhostLibraryRows();
+    this.ghostLibrary = this.loadGhostLibrary();
+    const replays = this.ghostLibrary.replays;
+    const rowHeight = 52;
+    const rowWidth = 352;
+    const visibleHeight = rowHeight * GHOST_MAX_SAVED;
+    const count = replays.length;
+    const badgeLabel = `${count}/${GHOST_MAX_SAVED}`;
+    const badgeW = badgeLabel.length * 8 + 24;
+
+    this.paintRoundedRect(
+      this.ghostLibraryBadgeBg,
+      GHOST_LIB_PANEL_W / 2 - 28 - badgeW,
+      -GHOST_LIB_PANEL_H / 2 + 30 - 12,
+      badgeW,
+      24,
+      12,
+      0x172554,
+      1,
+      0x38bdf8,
+      0.45,
+      1,
+    );
+    this.ghostLibraryBadge.setText(badgeLabel);
+
+    if (count === 0) {
+      const emptyCard = this.add.graphics();
+      this.paintRoundedRect(emptyCard, -rowWidth / 2, 36, rowWidth, 120, 16, 0x111827, 1, 0x273449, 1, 1);
+      const emptyTitle = this.add
+        .text(0, 72, 'No saved ghosts yet', {
+          fontFamily: MODAL_FONT,
+          fontSize: '16px',
+          fontStyle: 'bold',
+          color: '#e2e8f0',
+        })
+        .setOrigin(0.5);
+      const emptyHint = this.add
+        .text(0, 98, 'Finish a run, then tap Save ghost race', {
+          fontFamily: MODAL_FONT,
+          fontSize: '13px',
+          color: '#64748b',
+        })
+        .setOrigin(0.5);
+      this.ghostLibraryList.add([emptyCard, emptyTitle, emptyHint]);
+      this.ghostLibraryRows.push(emptyCard, emptyTitle, emptyHint);
+      return;
+    }
+
+    const listMask = this.make.graphics();
+    listMask.fillStyle(0xffffff);
+    listMask.fillRect(-rowWidth / 2, 0, rowWidth, visibleHeight);
+    this.ghostLibraryList.clearMask(true);
+    this.ghostLibraryList.setMask(listMask.createGeometryMask());
+
+    replays.slice(0, GHOST_MAX_SAVED).forEach((replay, index) => {
+      const selected = this.ghostLibrary.selectedId === replay.id;
+      const card = this.createGhostReplayCard(replay, index * rowHeight, rowWidth, rowHeight, selected, () => {
+        this.setSelectedGhostReplay(replay.id);
+        this.refreshGhostLibraryModal();
+      });
+      this.ghostLibraryList.add(card);
+      this.ghostLibraryRows.push(card);
+    });
+  }
+
+  isPointerOverRaceUi(pointer) {
+    if (this.postRaceMenu?.visible) {
+      return true;
+    }
+
+    if (this.saveGhostModal?.visible) {
+      return true;
+    }
+
+    if (this.ghostLibraryModal?.visible) {
+      return true;
+    }
+
+    if (
+      this.preRaceGhostButton?.visible &&
+      this.preRaceGhostButton.getBounds().contains(pointer.x, pointer.y)
+    ) {
+      return true;
+    }
+
+    return false;
+  }
+
   placeDogForDeath() {
     this.dog.setVelocity(0, 0);
     this.dog.x = DOG_X;
@@ -2055,17 +3051,8 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
-    this.finalizeGhostRecording(this.time.now);
+    this.pendingRunRecording = this.buildPendingRunRecording(this.time.now);
     this.ghostDog?.setVisible(false);
-
-    const beatGhost =
-      this.ghostBestAtRunStart &&
-      Math.floor(this.score) > this.ghostBestAtRunStart.finalScore;
-    const gameOverSubtext = beatGhost
-      ? '\nYou beat your ghost!'
-      : this.ghostBestAtRunStart
-        ? `\nGhost: ${this.ghostBestAtRunStart.finalScore}`
-        : '';
 
     this.isGameOver = true;
     this.wasAirborne = false;
@@ -2077,22 +3064,7 @@ export default class GameScene extends Phaser.Scene {
     this.dog.setScale(DOG_SCALE);
     this.dog.play('dead');
     this.placeDogForDeath();
-
-    this.add
-      .text(WIDTH / 2, HEIGHT / 2, `Game Over\nTap to Restart${gameOverSubtext}`, {
-        fontFamily: 'Arial, sans-serif',
-        fontSize: '28px',
-        color: '#ffffff',
-        align: 'center',
-        stroke: '#000000',
-        strokeThickness: 4,
-      })
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setDepth(HEARTS_DEPTH + 1);
-
-    this.input.keyboard.once('keydown-SPACE', () => this.scene.restart());
-    this.input.keyboard.once('keydown-UP', () => this.scene.restart());
+    this.showPostRaceMenu();
   }
 
   handleCollision(_dog, rock) {
