@@ -1,4 +1,9 @@
 import Phaser from 'phaser';
+import {
+  fetchHKWeatherSnapshot,
+  HK_WEATHER_EFFECTS,
+  resolveHKWeatherEffect,
+} from '../services/hkWeather.js';
 
 const WIDTH = 480;
 const HEIGHT = 800;
@@ -99,9 +104,6 @@ const RAIN_BACK_DEPTH = 3;
 const RAIN_FRONT_DEPTH = 9;
 const STORM_OVERLAY_DEPTH = -4;
 const DAY_OVERLAY_DEPTH = -3;
-const SKY_BODY_DEPTH = -2;
-const SKY_BODY_X = WIDTH - 58;
-const SKY_BODY_Y = 68;
 const THUNDER_FLASH_DEPTH = 15;
 const DEV_MENU_DEPTH = 100;
 const HEARTS_DEPTH = 20;
@@ -344,7 +346,8 @@ export default class GameScene extends Phaser.Scene {
   static devDay = DAY_MODES.DAY;
   static devDayNightCycle = 'on';
   static devSpeed = 'fast';
-  static devGhostRace = 'on';
+  static devGhostRace = 'off';
+  static devHKWeather = 'off';
 
   constructor() {
     super('GameScene');
@@ -532,7 +535,7 @@ export default class GameScene extends Phaser.Scene {
       // Ignore storage errors.
     }
 
-    return true;
+    return false;
   }
 
   saveGhostRaceEnabled(enabled) {
@@ -1294,6 +1297,8 @@ export default class GameScene extends Phaser.Scene {
     const showRain = mode !== WEATHER_MODES.DRY;
     const enableThunder = mode === WEATHER_MODES.STORM;
 
+    this.cameras.main.setBackgroundColor(this.liveSkyColor ?? '#87ceeb');
+
     this.rainBackGfx?.setVisible(showRain);
     this.rainFrontGfx?.setVisible(showRain);
     this.stormOverlay?.setVisible(showRain);
@@ -1326,8 +1331,70 @@ export default class GameScene extends Phaser.Scene {
     this.refreshDevMenu();
   }
 
-  setWeatherMode(mode) {
+  setWeatherMode(mode, { manual = true } = {}) {
     GameScene.devWeather = mode;
+    if (manual) {
+      this.weatherManualOverride = true;
+      GameScene.devHKWeather = 'off';
+    }
+    this.applyWeatherMode();
+  }
+
+  setHKWeatherLive(enabled) {
+    GameScene.devHKWeather = enabled ? 'on' : 'off';
+
+    if (enabled) {
+      this.weatherManualOverride = false;
+      this.fetchAndApplyHKWeather();
+    } else {
+      this.weatherManualOverride = true;
+      this.windIntensity = 0;
+      this.liveSkyColor = '#87ceeb';
+      this.setWeatherMode(WEATHER_MODES.DRY);
+    }
+
+    this.refreshDevMenu();
+  }
+
+  async fetchAndApplyHKWeather() {
+    if (GameScene.devHKWeather !== 'on') {
+      return;
+    }
+
+    try {
+      const snapshot = await fetchHKWeatherSnapshot();
+      this.applyHKWeatherEffect(resolveHKWeatherEffect(snapshot));
+    } catch (error) {
+      console.warn('Hong Kong weather unavailable, using default weather.', error);
+    }
+  }
+
+  applyHKWeatherEffect(effect) {
+    if (GameScene.devHKWeather !== 'on') {
+      return;
+    }
+
+    this.liveWeatherLabel = effect.label;
+    this.liveSkyColor = effect.skyColor;
+    this.windIntensity = effect.windIntensity;
+
+    switch (effect.effect) {
+      case HK_WEATHER_EFFECTS.STORM:
+        this.setWeatherMode(WEATHER_MODES.STORM, { manual: false });
+        break;
+      case HK_WEATHER_EFFECTS.RAIN:
+        this.setWeatherMode(WEATHER_MODES.RAIN, { manual: false });
+        break;
+      case HK_WEATHER_EFFECTS.WINDY:
+        this.setWeatherMode(WEATHER_MODES.DRY, { manual: false });
+        break;
+      case HK_WEATHER_EFFECTS.SUNNY:
+      case HK_WEATHER_EFFECTS.NORMAL:
+      default:
+        this.setWeatherMode(WEATHER_MODES.DRY, { manual: false });
+        break;
+    }
+
     this.applyWeatherMode();
   }
 
@@ -1349,63 +1416,6 @@ export default class GameScene extends Phaser.Scene {
     this.dayOverlay.setVisible(true);
     this.dayOverlay.setAlpha(clamped);
     this.dayOverlayBlend = clamped;
-    this.updateSkyBodies(clamped);
-  }
-
-  createSkyBodies() {
-    this.skySun = this.add.container(SKY_BODY_X, SKY_BODY_Y);
-    this.skySun.setScrollFactor(0);
-    this.skySun.setDepth(SKY_BODY_DEPTH);
-
-    const sunGlow = this.add.circle(0, 0, 36, 0xffe680, 0.45);
-    const sunCore = this.add.circle(0, 0, 22, 0xffdd55, 1);
-    const sunRays = this.add.graphics();
-    sunRays.lineStyle(3, 0xffee88, 0.55);
-    for (let i = 0; i < 8; i++) {
-      const angle = (Math.PI * 2 * i) / 8;
-      sunRays.lineBetween(
-        Math.cos(angle) * 26,
-        Math.sin(angle) * 26,
-        Math.cos(angle) * 38,
-        Math.sin(angle) * 38,
-      );
-    }
-    this.skySun.add([sunGlow, sunRays, sunCore]);
-
-    this.skyMoon = this.add.container(SKY_BODY_X, SKY_BODY_Y);
-    this.skyMoon.setScrollFactor(0);
-    this.skyMoon.setDepth(SKY_BODY_DEPTH);
-
-    const moonGlow = this.add.circle(0, 0, 32, 0xc8dcff, 0.35);
-    moonGlow.setBlendMode(Phaser.BlendModes.ADD);
-    const moonCore = this.add.circle(0, 0, 18, 0xf0f6ff, 1);
-    const moonShine = this.add.circle(-5, -4, 14, 0xffffff, 0.35);
-    moonShine.setBlendMode(Phaser.BlendModes.ADD);
-    const moonCrater = this.add.circle(7, 5, 4, 0xd0dae8, 0.45);
-    this.skyMoon.add([moonGlow, moonCore, moonCrater, moonShine]);
-
-    this.skyMoon.setAlpha(0);
-    this.skySun.setAlpha(1);
-  }
-
-  updateSkyBodies(nightBlend) {
-    const night = Phaser.Math.Clamp(
-      nightBlend ?? this.dayOverlayBlend ?? 0,
-      0,
-      1,
-    );
-    const day = 1 - night;
-
-    if (this.skySun) {
-      this.skySun.setAlpha(day);
-      this.skySun.setScale(0.92 + day * 0.08);
-    }
-
-    if (this.skyMoon) {
-      this.skyMoon.setAlpha(night);
-      this.skyMoon.setScale(0.9 + night * 0.12);
-      this.skyMoon.rotation = night * 0.08;
-    }
   }
 
   easeFade(t) {
@@ -1519,7 +1529,7 @@ export default class GameScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true });
 
     this.devPanelBg = this.add
-      .rectangle(10, 42, 250, 278, 0x111827, 0.92)
+      .rectangle(10, 42, 250, 302, 0x111827, 0.92)
       .setOrigin(0, 0)
       .setScrollFactor(0)
       .setDepth(DEV_MENU_DEPTH)
@@ -1545,56 +1555,71 @@ export default class GameScene extends Phaser.Scene {
       }),
     };
 
+    this.hkWeatherLabel = this.add
+      .text(18, 76, 'HK live weather', devLabelStyle)
+      .setScrollFactor(0)
+      .setDepth(DEV_MENU_DEPTH + 1)
+      .setVisible(false);
+
+    this.hkWeatherButtons = {
+      off: this.createDevOption(18, 92, 'Off', optionStyle, () => {
+        this.setHKWeatherLive(false);
+      }),
+      on: this.createDevOption(88, 92, 'On', optionStyle, () => {
+        this.setHKWeatherLive(true);
+      }),
+    };
+
     this.dayButtons = {
-      [DAY_MODES.DAY]: this.createDevOption(18, 94, 'Daytime', optionStyle, () => {
+      [DAY_MODES.DAY]: this.createDevOption(18, 118, 'Daytime', optionStyle, () => {
         this.setDayMode(DAY_MODES.DAY);
       }),
-      [DAY_MODES.NIGHT]: this.createDevOption(108, 94, 'Night', optionStyle, () => {
+      [DAY_MODES.NIGHT]: this.createDevOption(108, 118, 'Night', optionStyle, () => {
         this.setDayMode(DAY_MODES.NIGHT);
       }),
     };
 
     this.speedButtons = {
-      normal: this.createDevOption(18, 134, 'Normal', optionStyle, () => {
+      normal: this.createDevOption(18, 158, 'Normal', optionStyle, () => {
         this.setSpeedMode('normal');
       }),
-      fast: this.createDevOption(88, 134, 'Fast x2', optionStyle, () => {
+      fast: this.createDevOption(88, 158, 'Fast x2', optionStyle, () => {
         this.setSpeedMode('fast');
       }),
-      faster: this.createDevOption(158, 134, 'Faster x4', optionStyle, () => {
+      faster: this.createDevOption(158, 158, 'Faster x4', optionStyle, () => {
         this.setSpeedMode('faster');
       }),
     };
 
     this.cycleLabel = this.add
-      .text(18, 158, 'Day/night cycle', devLabelStyle)
+      .text(18, 182, 'Day/night cycle', devLabelStyle)
       .setScrollFactor(0)
       .setDepth(DEV_MENU_DEPTH + 1)
       .setVisible(false);
 
     this.cycleButtons = {
-      on: this.createDevOption(18, 174, 'On', optionStyle, () => {
+      on: this.createDevOption(18, 198, 'On', optionStyle, () => {
         this.setDayNightCycle(true);
       }),
-      off: this.createDevOption(88, 174, 'Off', optionStyle, () => {
+      off: this.createDevOption(88, 198, 'Off', optionStyle, () => {
         this.setDayNightCycle(false);
       }),
     };
 
     this.ghostLabel = this.add
-      .text(18, 198, 'Ghost race', devLabelStyle)
+      .text(18, 222, 'Ghost race', devLabelStyle)
       .setScrollFactor(0)
       .setDepth(DEV_MENU_DEPTH + 1)
       .setVisible(false);
 
     this.ghostButtons = {
-      on: this.createDevOption(18, 214, 'On', optionStyle, () => {
+      on: this.createDevOption(18, 238, 'On', optionStyle, () => {
         this.setGhostRace(true);
       }),
-      off: this.createDevOption(88, 214, 'Off', optionStyle, () => {
+      off: this.createDevOption(88, 238, 'Off', optionStyle, () => {
         this.setGhostRace(false);
       }),
-      clear: this.createDevOption(158, 214, 'Clr', optionStyle, () => {
+      clear: this.createDevOption(158, 238, 'Clr', optionStyle, () => {
         this.clearGhostBest();
         this.refreshDevMenu();
       }),
@@ -1602,9 +1627,11 @@ export default class GameScene extends Phaser.Scene {
 
     this.devMenuItems = [
       this.devPanelBg,
+      this.hkWeatherLabel,
       this.cycleLabel,
       this.ghostLabel,
       ...Object.values(this.weatherButtons),
+      ...Object.values(this.hkWeatherButtons),
       ...Object.values(this.dayButtons),
       ...Object.values(this.speedButtons),
       ...Object.values(this.cycleButtons),
@@ -1648,10 +1675,25 @@ export default class GameScene extends Phaser.Scene {
 
     const cycleOn = GameScene.devDayNightCycle === 'on';
     const ghostOn = this.ghostRaceEnabled;
+    const hkWeatherOn = GameScene.devHKWeather === 'on';
 
     Object.entries(this.weatherButtons).forEach(([mode, button]) => {
       if (button?.active) {
+        if (hkWeatherOn) {
+          button.setBackgroundColor('#374151');
+          button.setAlpha(0.55);
+          return;
+        }
+
+        button.setAlpha(1);
         button.setBackgroundColor(mode === GameScene.devWeather ? '#2563eb' : '#374151');
+      }
+    });
+
+    Object.entries(this.hkWeatherButtons ?? {}).forEach(([key, button]) => {
+      if (button?.active) {
+        const selected = (key === 'on' && hkWeatherOn) || (key === 'off' && !hkWeatherOn);
+        button.setBackgroundColor(selected ? '#2563eb' : '#374151');
       }
     });
 
@@ -1782,9 +1824,6 @@ export default class GameScene extends Phaser.Scene {
     this.dayOverlay.setAlpha(0);
     this.dayOverlay.setVisible(true);
     this.dayOverlayBlend = 0;
-
-    this.createSkyBodies();
-    this.updateSkyBodies(0);
   }
 
   createStormAtmosphere() {
@@ -1951,7 +1990,8 @@ export default class GameScene extends Phaser.Scene {
       }
 
       drop.y += drop.speed * intensity * dt;
-      drop.x += drop.drift * intensity * dt;
+      const windBoost = 1 + (this.windIntensity ?? 0);
+      drop.x += drop.drift * intensity * dt * windBoost;
 
       if (drop.y - drop.length > HEIGHT + 20) {
         drop.y = Phaser.Math.Between(-80, -10);
@@ -2006,6 +2046,11 @@ export default class GameScene extends Phaser.Scene {
     this.coyoteMs = 0;
     this.wasAirborne = false;
     this.jumpPhase = null;
+    this.weatherManualOverride = true;
+    GameScene.devWeather = WEATHER_MODES.DRY;
+    this.windIntensity = 0;
+    this.liveSkyColor = '#87ceeb';
+    this.liveWeatherLabel = null;
 
     this.ghostRaceEnabled = this.loadGhostRaceEnabled();
     GameScene.devGhostRace = this.ghostRaceEnabled ? 'on' : 'off';
@@ -2029,6 +2074,10 @@ export default class GameScene extends Phaser.Scene {
     this.createDevMenu();
     this.applyDayMode();
     this.applyWeatherMode();
+    if (GameScene.devHKWeather === 'on') {
+      this.weatherManualOverride = false;
+      this.fetchAndApplyHKWeather();
+    }
 
     this.physics.world.setBounds(0, 0, WIDTH, HEIGHT);
 
@@ -2121,16 +2170,18 @@ export default class GameScene extends Phaser.Scene {
     this.scrollSpeed = Math.min(baseSpeed + this.score * 0.05 * this.speedMultiplier, maxSpeed);
 
     this.isInMud = onGround && this.physics.overlap(this.dog, this.mudPatches);
-    this.dog.anims.timeScale = this.isInMud ? MUD_SLOW_FACTOR : 1;
+    const mudSlowFactor = this.isInMud ? MUD_SLOW_FACTOR : 1;
+    const effectiveScrollSpeed = this.scrollSpeed * mudSlowFactor;
+    this.dog.anims.timeScale = mudSlowFactor;
 
     const elapsed = time - this.ghostRunStartTime;
     this.processCourseSpawns(elapsed);
 
-    const scrollDelta = this.scrollSpeed * dt;
+    const scrollDelta = effectiveScrollSpeed * dt;
     this.skyLayer.tilePositionX += (scrollDelta * PARALLAX_SKY) / this.skyScale;
     this.groundLayer.tilePositionX += (scrollDelta * PARALLAX_GROUND) / this.groundScale;
 
-    this.score += this.scrollSpeed * dt * 0.1;
+    this.score += effectiveScrollSpeed * dt * 0.1;
     const displayScore = Math.floor(this.score);
     if (displayScore !== this.displayedScore) {
       this.displayedScore = displayScore;
@@ -2140,7 +2191,7 @@ export default class GameScene extends Phaser.Scene {
     this.updateDayNightCycle(delta);
 
     this.obstacles.getChildren().forEach((rock) => {
-      rock.x -= this.scrollSpeed * dt;
+      rock.x -= effectiveScrollSpeed * dt;
       rock.refreshBody();
 
       if (rock.x < -rock.displayWidth) {
@@ -2149,7 +2200,7 @@ export default class GameScene extends Phaser.Scene {
     });
 
     this.mudPatches.getChildren().forEach((mud) => {
-      mud.x -= this.scrollSpeed * dt;
+      mud.x -= effectiveScrollSpeed * dt;
       mud.refreshBody();
 
       if (mud.x < -mud.displayWidth) {
@@ -2158,7 +2209,7 @@ export default class GameScene extends Phaser.Scene {
     });
 
     this.heartPickups.getChildren().forEach((pickup) => {
-      pickup.x -= this.scrollSpeed * dt;
+      pickup.x -= effectiveScrollSpeed * dt;
       pickup.refreshBody();
 
       if (pickup.x < -pickup.displayWidth) {
