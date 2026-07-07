@@ -139,3 +139,37 @@ export function resolveHKWeatherEffect(snapshot) {
     skyColor: '#87ceeb',
   };
 }
+
+const CLOCK_DAWN_START_MIN = 5 * 60 + 30;
+const CLOCK_DAWN_END_MIN = 7 * 60;
+const CLOCK_DUSK_START_MIN = 17 * 60 + 30;
+const CLOCK_DUSK_END_MIN = 19 * 60 + 30;
+
+function easeClockFade(t) {
+  const clamped = Math.max(0, Math.min(1, t));
+  return clamped * clamped * clamped * (clamped * (clamped * 6 - 15) + 10);
+}
+
+export function getLocalClockDayOverlayAlpha(date = new Date()) {
+  const minutes = date.getHours() * 60 + date.getMinutes();
+
+  if (minutes >= CLOCK_DAWN_END_MIN && minutes < CLOCK_DUSK_START_MIN) {
+    return 0;
+  }
+
+  if (minutes >= CLOCK_DUSK_END_MIN || minutes < CLOCK_DAWN_START_MIN) {
+    return 1;
+  }
+
+  if (minutes >= CLOCK_DUSK_START_MIN) {
+    const t = (minutes - CLOCK_DUSK_START_MIN) / (CLOCK_DUSK_END_MIN - CLOCK_DUSK_START_MIN);
+    return easeClockFade(t);
+  }
+
+  const t = (minutes - CLOCK_DAWN_START_MIN) / (CLOCK_DAWN_END_MIN - CLOCK_DAWN_START_MIN);
+  return 1 - easeClockFade(t);
+}
+
+export function isLocalClockNight(date = new Date()) {
+  return getLocalClockDayOverlayAlpha(date) >= 0.5;
+}

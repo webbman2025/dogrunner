@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import {
   fetchHKWeatherSnapshot,
+  getLocalClockDayOverlayAlpha,
   HK_WEATHER_EFFECTS,
   resolveHKWeatherEffect,
 } from '../services/hkWeather.js';
@@ -1344,16 +1345,35 @@ export default class GameScene extends Phaser.Scene {
     GameScene.devHKWeather = enabled ? 'on' : 'off';
 
     if (enabled) {
+      this.dayNightStateBeforeHK = GameScene.devDayNightCycle;
+      GameScene.devDayNightCycle = 'off';
       this.weatherManualOverride = false;
+      this.applyClockDayMode();
       this.fetchAndApplyHKWeather();
     } else {
       this.weatherManualOverride = true;
       this.windIntensity = 0;
       this.liveSkyColor = '#87ceeb';
+      GameScene.devDayNightCycle = this.dayNightStateBeforeHK ?? GameScene.devDayNightCycle;
       this.setWeatherMode(WEATHER_MODES.DRY);
+      this.applyDayMode();
     }
 
     this.refreshDevMenu();
+  }
+
+  exitHKLiveModeForManualControls() {
+    if (GameScene.devHKWeather !== 'on') {
+      return false;
+    }
+
+    GameScene.devHKWeather = 'off';
+    this.weatherManualOverride = true;
+    this.windIntensity = 0;
+    this.liveSkyColor = '#87ceeb';
+    GameScene.devDayNightCycle = this.dayNightStateBeforeHK ?? GameScene.devDayNightCycle;
+    this.setWeatherMode(WEATHER_MODES.DRY);
+    return true;
   }
 
   async fetchAndApplyHKWeather() {
@@ -1451,6 +1471,11 @@ export default class GameScene extends Phaser.Scene {
   }
 
   applyDayMode() {
+    if (GameScene.devHKWeather === 'on') {
+      this.applyClockDayMode();
+      return;
+    }
+
     if (GameScene.devDayNightCycle === 'on') {
       const target = this.getDayOverlayAlphaFromScore(this.score ?? 0);
       this.dayOverlayBlend = target;
@@ -1462,11 +1487,41 @@ export default class GameScene extends Phaser.Scene {
     this.refreshDevMenu();
   }
 
+  applyClockDayMode() {
+    const target = getLocalClockDayOverlayAlpha();
+    this.dayOverlayBlend = target;
+    this.setDayOverlayAlpha(target);
+    GameScene.devDay = target >= 0.5 ? DAY_MODES.NIGHT : DAY_MODES.DAY;
+    this.refreshDevMenu();
+  }
+
+  updateClockDayNightCycle(delta) {
+    const target = getLocalClockDayOverlayAlpha();
+    const blend = Phaser.Math.Linear(
+      this.dayOverlayBlend ?? target,
+      target,
+      Phaser.Math.Clamp((delta / 1000) * DAY_OVERLAY_LERP_SPEED, 0, 1),
+    );
+    this.dayOverlayBlend = blend;
+    this.setDayOverlayAlpha(blend);
+
+    const mode = blend >= 0.5 ? DAY_MODES.NIGHT : DAY_MODES.DAY;
+    if (mode !== GameScene.devDay) {
+      GameScene.devDay = mode;
+      this.refreshDevMenu();
+    }
+  }
+
   getDayModeFromScore(score) {
     return this.getDayOverlayAlphaFromScore(score) >= 0.5 ? DAY_MODES.NIGHT : DAY_MODES.DAY;
   }
 
   updateDayNightCycle(delta) {
+    if (GameScene.devHKWeather === 'on') {
+      this.updateClockDayNightCycle(delta);
+      return;
+    }
+
     if (GameScene.devDayNightCycle !== 'on') {
       return;
     }
@@ -1488,12 +1543,16 @@ export default class GameScene extends Phaser.Scene {
   }
 
   setDayMode(mode) {
+    this.exitHKLiveModeForManualControls();
+
     GameScene.devDayNightCycle = 'off';
     GameScene.devDay = mode;
     this.applyDayMode();
   }
 
   setDayNightCycle(enabled) {
+    this.exitHKLiveModeForManualControls();
+
     GameScene.devDayNightCycle = enabled ? 'on' : 'off';
     if (enabled) {
       GameScene.devDay = this.getDayModeFromScore(this.score);
@@ -1699,6 +1758,12 @@ export default class GameScene extends Phaser.Scene {
 
     Object.entries(this.dayButtons).forEach(([mode, button]) => {
       if (button?.active) {
+        if (hkWeatherOn) {
+          button.setBackgroundColor('#374151');
+          button.setAlpha(0.55);
+          return;
+        }
+
         const selected = mode === GameScene.devDay;
         button.setBackgroundColor(selected ? '#2563eb' : '#374151');
         button.setAlpha(cycleOn ? 0.65 : 1);
@@ -1713,6 +1778,12 @@ export default class GameScene extends Phaser.Scene {
 
     Object.entries(this.cycleButtons).forEach(([key, button]) => {
       if (button?.active) {
+        if (hkWeatherOn) {
+          button.setBackgroundColor('#374151');
+          button.setAlpha(0.55);
+          return;
+        }
+
         const selected = (key === 'on' && cycleOn) || (key === 'off' && !cycleOn);
         button.setBackgroundColor(selected ? '#2563eb' : '#374151');
       }
@@ -2075,7 +2146,10 @@ export default class GameScene extends Phaser.Scene {
     this.applyDayMode();
     this.applyWeatherMode();
     if (GameScene.devHKWeather === 'on') {
+      this.dayNightStateBeforeHK = GameScene.devDayNightCycle;
+      GameScene.devDayNightCycle = 'off';
       this.weatherManualOverride = false;
+      this.applyClockDayMode();
       this.fetchAndApplyHKWeather();
     }
 
