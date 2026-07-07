@@ -344,7 +344,7 @@ export default class GameScene extends Phaser.Scene {
   static devDay = DAY_MODES.DAY;
   static devDayNightCycle = 'on';
   static devSpeed = 'fast';
-  static devGhostRace = 'off';
+  static devGhostRace = 'on';
 
   constructor() {
     super('GameScene');
@@ -532,7 +532,7 @@ export default class GameScene extends Phaser.Scene {
       // Ignore storage errors.
     }
 
-    return GameScene.devGhostRace === 'on';
+    return true;
   }
 
   saveGhostRaceEnabled(enabled) {
