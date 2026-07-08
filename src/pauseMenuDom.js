@@ -1,32 +1,26 @@
-const PANEL_NATURAL_W = 784;
-const PANEL_NATURAL_H = 918;
-
-const HIT_REGIONS = [
-  { action: 'resume', rect: [130, 335, 655, 376] },
-  { action: 'retry', rect: [130, 445, 655, 570] },
-  { action: 'home', rect: [130, 700, 655, 748] },
-];
-
 let handlers = null;
+let lastAction = '';
 let lastDispatchAt = 0;
 
 function getElements() {
   return {
     backdrop: document.getElementById('pause-backdrop'),
     menu: document.getElementById('pause-menu'),
-    image: document.getElementById('pause-panel-img'),
+    panel: document.querySelector('.pause-panel'),
   };
 }
 
 function dispatchAction(action) {
-  if (!handlers || !isPauseMenuVisible()) {
+  if (!handlers || !isPauseMenuVisible() || !action) {
     return;
   }
 
   const now = Date.now();
-  if (now - lastDispatchAt < 250) {
+  if (action === lastAction && now - lastDispatchAt < 120) {
     return;
   }
+
+  lastAction = action;
   lastDispatchAt = now;
 
   if (action === 'resume') {
@@ -38,91 +32,41 @@ function dispatchAction(action) {
   }
 }
 
-function getImageFitRect(img) {
-  const rect = img.getBoundingClientRect();
-  const naturalW = img.naturalWidth || PANEL_NATURAL_W;
-  const naturalH = img.naturalHeight || PANEL_NATURAL_H;
-  const scale = Math.min(rect.width / naturalW, rect.height / naturalH);
-  const drawW = naturalW * scale;
-  const drawH = naturalH * scale;
-  const offsetX = rect.left + (rect.width - drawW) / 2;
-  const offsetY = rect.top + (rect.height - drawH) / 2;
-
-  return { offsetX, offsetY, scale, naturalW, naturalH };
-}
-
-function mapPointerToNatural(img, clientX, clientY) {
-  const { offsetX, offsetY, scale, naturalW, naturalH } = getImageFitRect(img);
-  const x = (clientX - offsetX) / scale;
-  const y = (clientY - offsetY) / scale;
-
-  if (x < 0 || y < 0 || x > naturalW || y > naturalH) {
-    return null;
-  }
-
-  return { x, y };
-}
-
-function hitTest(x, y) {
-  for (const region of HIT_REGIONS) {
-    const [x1, y1, x2, y2] = region.rect;
-    if (x >= x1 && x <= x2 && y >= y1 && y <= y2) {
-      return region.action;
-    }
-  }
-
-  return null;
-}
-
-function bindImageMap() {
-  const menu = document.getElementById('pause-menu');
-  const image = document.getElementById('pause-panel-img');
-  if (!menu || menu.dataset.bound === 'true') {
+function bindPauseHits() {
+  const panel = document.querySelector('.pause-panel');
+  if (!panel || panel.dataset.bound === 'true') {
     return;
   }
 
-  menu.dataset.bound = 'true';
+  panel.dataset.bound = 'true';
 
-  menu.querySelectorAll('[data-pause-action]').forEach((area) => {
-    area.addEventListener('click', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      dispatchAction(area.getAttribute('data-pause-action'));
-    });
-  });
-
-  if (!image) {
-    return;
-  }
-
-  image.addEventListener('pointerup', (event) => {
+  const onHit = (event) => {
     if (!isPauseMenuVisible()) {
       return;
     }
 
-    const point = mapPointerToNatural(image, event.clientX, event.clientY);
-    if (!point) {
-      return;
-    }
-
-    const action = hitTest(point.x, point.y);
-    if (!action) {
+    const target = event.target.closest('[data-pause-action]');
+    if (!target) {
       return;
     }
 
     event.preventDefault();
     event.stopPropagation();
-    dispatchAction(action);
-  });
+    dispatchAction(target.getAttribute('data-pause-action'));
+  };
+
+  panel.addEventListener('pointerdown', onHit, { passive: false });
 }
 
 export function initPauseMenu(callbacks) {
   handlers = callbacks;
-  bindImageMap();
+  bindPauseHits();
 }
 
 export function clearPauseMenuHandlers() {
   handlers = null;
+  lastAction = '';
+  lastDispatchAt = 0;
 }
 
 export function showPauseMenu() {

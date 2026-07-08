@@ -117,14 +117,45 @@
       width: 100%;
       height: 100%;
       object-fit: contain;
-      cursor: pointer;
-      touch-action: manipulation;
+      pointer-events: none;
       user-select: none;
       -webkit-user-drag: none;
     }
 
-    #pause-panel-map area {
+    .pause-hit {
+      position: absolute;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      background: transparent;
       cursor: pointer;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .pause-hit:active {
+      background: rgba(255, 255, 255, 0.08);
+    }
+
+    .pause-hit-resume {
+      left: 13.27%;
+      top: 33.88%;
+      width: 73.6%;
+      height: 9.91%;
+    }
+
+    .pause-hit-retry {
+      left: 1.4%;
+      top: 52.29%;
+      width: 96.94%;
+      height: 10.89%;
+    }
+
+    .pause-hit-home {
+      left: 12.76%;
+      top: 74.07%;
+      width: 74.49%;
+      height: 9.8%;
     }
   </style>
 </head>
@@ -140,31 +171,10 @@
         width="784"
         height="918"
         alt="Pause menu"
-        usemap="#pause-panel-map"
       />
-      <map name="pause-panel-map" id="pause-panel-map">
-        <area
-          shape="rect"
-          coords="130,335,655,376"
-          href="#"
-          alt=""
-          data-pause-action="resume"
-        />
-        <area
-          shape="rect"
-          coords="130,445,655,570"
-          href="#"
-          alt=""
-          data-pause-action="retry"
-        />
-        <area
-          shape="rect"
-          coords="130,700,655,748"
-          href="#"
-          alt=""
-          data-pause-action="home"
-        />
-      </map>
+      <button type="button" class="pause-hit pause-hit-resume" data-pause-action="resume" aria-label="Resume"></button>
+      <button type="button" class="pause-hit pause-hit-retry" data-pause-action="retry" aria-label="Try Again"></button>
+      <button type="button" class="pause-hit pause-hit-home" data-pause-action="home" aria-label="Back to Home"></button>
     </div>
   </div>
   <div id="load-error"></div>
