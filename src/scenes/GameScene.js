@@ -6,6 +6,12 @@ import {
   resolveHKWeatherEffect,
 } from '../services/hkWeather.js';
 import { queueGameAssets } from './queueGameAssets.js';
+import {
+  clearPauseMenuHandlers,
+  hidePauseMenu,
+  initPauseMenu,
+  showPauseMenu,
+} from '../pauseMenuDom.js';
 
 const WIDTH = 480;
 const HEIGHT = 800;
@@ -109,7 +115,15 @@ const STORM_OVERLAY_DEPTH = -4;
 const DAY_OVERLAY_DEPTH = -3;
 const THUNDER_FLASH_DEPTH = 15;
 const DEV_MENU_DEPTH = 100;
+const PAUSE_UI_DEPTH = 110;
 const HEARTS_DEPTH = 20;
+const FIGMA_W = 375;
+const FIGMA_H = 812;
+const PAUSE_BTN_CENTER_X = 311 + 20;
+const PAUSE_BTN_CENTER_Y = 29 + 20;
+const PAUSE_BTN_SIZE = 35;
+const sxUi = (value) => (value * WIDTH) / FIGMA_W;
+const syUi = (value) => (value * HEIGHT) / FIGMA_H;
 const MAX_HEARTS = 3;
 const HEART_W = 32;
 const HEART_H = 27;
@@ -529,6 +543,8 @@ export default class GameScene extends Phaser.Scene {
     }
 
     this.hasStarted = true;
+
+    this.pauseButton?.setVisible(true);
 
     this.gameplayElapsed = 0;
     this.lastGhostSampleTime = 0;
@@ -1861,7 +1877,11 @@ export default class GameScene extends Phaser.Scene {
 
   bindInputHandlers() {
     this.onPointerDown = (pointer) => {
-      if (this.isPointerOverDevMenu(pointer)) {
+      if (this.isPointerOverDevMenu(pointer) || this.isPointerOverPauseButton(pointer)) {
+        return;
+      }
+
+      if (this.isPaused) {
         return;
       }
 
@@ -1874,6 +1894,10 @@ export default class GameScene extends Phaser.Scene {
     };
 
     this.onPointerUp = () => {
+      if (this.isPaused) {
+        return;
+      }
+
       this.endJump();
     };
 
@@ -1884,6 +1908,9 @@ export default class GameScene extends Phaser.Scene {
   }
 
   shutdown() {
+    this.releasePauseState();
+    clearPauseMenuHandlers();
+
     if (this.onPointerDown) {
       this.input.off('pointerdown', this.onPointerDown);
     }
@@ -1891,6 +1918,128 @@ export default class GameScene extends Phaser.Scene {
     if (this.onPointerUp) {
       this.input.off('pointerup', this.onPointerUp);
     }
+  }
+
+  pauseAnimatedSprites() {
+    this.dog?.anims?.pause();
+    this.ghostDog?.anims?.pause();
+  }
+
+  resumeAnimatedSprites() {
+    this.dog?.anims?.resume();
+    this.ghostDog?.anims?.resume();
+  }
+
+  releasePauseState() {
+    this.isPaused = false;
+    this.jumpHeld = false;
+    this.jumpBuffered = false;
+    hidePauseMenu();
+
+    if (this.time) {
+      this.time.paused = false;
+    }
+
+    if (this.physics?.world) {
+      this.physics.resume();
+    }
+
+    if (this.tweens) {
+      this.tweens.resumeAll();
+    }
+
+    this.resumeAnimatedSprites();
+    this.anims.resumeAll();
+  }
+
+  createPauseButton() {
+    const size = sxUi(PAUSE_BTN_SIZE);
+    const hitSize = Math.max(size, 44);
+    const stroke = Math.max(1.5, size * 0.05);
+
+    this.pauseButton = this.add.container(sxUi(PAUSE_BTN_CENTER_X), syUi(PAUSE_BTN_CENTER_Y));
+    this.pauseButton.setScrollFactor(0).setDepth(PAUSE_UI_DEPTH);
+
+    const icon = this.add.graphics();
+    const radius = size / 2 - stroke / 2;
+    icon.fillStyle(0xffffff, 1);
+    icon.lineStyle(stroke, 0x000000, 1);
+    icon.fillCircle(0, 0, radius);
+    icon.strokeCircle(0, 0, radius);
+
+    const barW = size * 0.1225;
+    const barH = size * 0.49;
+    const gap = size * 0.22;
+    icon.fillStyle(0x000000, 1);
+    icon.fillRoundedRect(-gap / 2 - barW, -barH / 2, barW, barH, barW * 0.2);
+    icon.fillRoundedRect(gap / 2, -barH / 2, barW, barH, barW * 0.2);
+
+    const hit = this.add
+      .rectangle(0, 0, hitSize, hitSize, 0x000000, 0.001)
+      .setInteractive({ useHandCursor: true });
+
+    hit.on('pointerdown', (pointer, _localX, _localY, event) => {
+      event?.stopPropagation();
+      this.togglePause();
+    });
+
+    this.pauseButton.add([icon, hit]);
+    this.pauseButton.setVisible(false);
+  }
+
+  isPointerOverPauseButton(pointer) {
+    const hit = this.pauseButton?.list?.[1];
+    if (!hit?.active || !this.pauseButton?.visible) {
+      return false;
+    }
+
+    return hit.getBounds().contains(pointer.x, pointer.y);
+  }
+
+  togglePause() {
+    if (this.isPaused) {
+      this.resumeFromPause();
+      return;
+    }
+
+    this.pauseGame();
+  }
+
+  pauseGame() {
+    if (this.isPaused || this.isGameOver || !this.hasStarted) {
+      return;
+    }
+
+    this.isPaused = true;
+    this.jumpHeld = false;
+    this.jumpBuffered = false;
+    this.physics.pause();
+    this.tweens.pauseAll();
+    this.pauseAnimatedSprites();
+    this.time.paused = true;
+    showPauseMenu();
+  }
+
+  resumeFromPause() {
+    if (!this.isPaused || this.isGameOver) {
+      return;
+    }
+
+    this.releasePauseState();
+  }
+
+  retryFromPause() {
+    if (this.isGameOver) {
+      return;
+    }
+
+    this.releasePauseState();
+    this.scene.start('LoadingScene', { ghostRace: this.ghostRaceEnabled });
+  }
+
+  goHomeFromPause() {
+    this.releasePauseState();
+    this.scene.start('TitleScene');
   }
 
   createParallaxLayer(key, depth) {
@@ -2127,6 +2276,15 @@ export default class GameScene extends Phaser.Scene {
 
   create() {
     this.isGameOver = false;
+    this.isPaused = false;
+    hidePauseMenu();
+    this.anims.resumeAll();
+    initPauseMenu({
+      onResume: () => this.resumeFromPause(),
+      onRetry: () => this.retryFromPause(),
+      onHome: () => this.goHomeFromPause(),
+    });
+    this.createPauseButton();
     this.hearts = MAX_HEARTS;
     this.hitCooldownMs = 0;
     this.speedMultiplier = this.getSpeedMultiplier();
@@ -2231,17 +2389,34 @@ export default class GameScene extends Phaser.Scene {
 
     this.cursors = this.input.keyboard.createCursorKeys();
     this.spaceKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+    this.escKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
 
     this.spaceKey.on('down', () => this.startJump());
     this.spaceKey.on('up', () => this.endJump());
     this.cursors.up.on('down', () => this.startJump());
     this.cursors.up.on('up', () => this.endJump());
+    this.escKey.on('down', () => {
+      if (this.isGameOver) {
+        return;
+      }
+
+      if (this.isPaused) {
+        this.resumeFromPause();
+        return;
+      }
+
+      this.pauseGame();
+    });
 
     this.hasStarted = false;
     this.startGameplay();
   }
 
   update(time, delta) {
+    if (this.isPaused) {
+      return;
+    }
+
     const cappedDelta = Math.min(delta, MAX_FRAME_DELTA_MS);
 
     this.updateRain(cappedDelta);
@@ -2453,7 +2628,7 @@ export default class GameScene extends Phaser.Scene {
   }
 
   startJump() {
-    if (this.isGameOver) {
+    if (this.isGameOver || this.isPaused) {
       return;
     }
 
@@ -2488,6 +2663,10 @@ export default class GameScene extends Phaser.Scene {
   }
 
   endJump() {
+    if (this.isPaused) {
+      return;
+    }
+
     this.jumpHeld = false;
 
     const heldFor = this.time.now - this.jumpPressTime;
@@ -2536,6 +2715,8 @@ export default class GameScene extends Phaser.Scene {
         : '';
 
     this.isGameOver = true;
+    this.releasePauseState();
+    this.pauseButton?.setVisible(false);
     this.wasAirborne = false;
     this.jumpPhase = null;
     this.dog.anims.timeScale = 1;

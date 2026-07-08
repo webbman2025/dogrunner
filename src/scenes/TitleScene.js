@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { resetPauseOverlay } from '../pauseMenuDom.js';
 
 const WIDTH = 480;
 const HEIGHT = 800;
@@ -25,6 +26,10 @@ export default class TitleScene extends Phaser.Scene {
   }
 
   create() {
+    resetPauseOverlay();
+    this.anims.resumeAll();
+    this.tweens.resumeAll();
+
     this.createBackground();
     this.createLogo();
     this.createCtaButtons();

@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { hidePauseMenu } from '../pauseMenuDom.js';
 import { queueGameAssets } from './queueGameAssets.js';
 
 const WIDTH = 480;
@@ -43,6 +44,10 @@ export default class LoadingScene extends Phaser.Scene {
   }
 
   create() {
+    hidePauseMenu();
+    this.anims.resumeAll();
+    this.tweens.resumeAll();
+
     this.cameras.main.setBackgroundColor(LOADING_BG);
 
     if (!this.anims.exists('loading-run')) {
