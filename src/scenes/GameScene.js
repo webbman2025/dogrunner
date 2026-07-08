@@ -34,6 +34,8 @@ const ROCK_SPAWN_MAX_FLOOR_MS = 2600;
 const HAZARD_SPAWN_X = WIDTH + 40;
 const HAZARD_MIN_GAP_PX = 100;
 const HAZARD_RETRY_MS = 450;
+const MAX_FRAME_DELTA_MS = 50;
+const MAX_HAZARD_SPAWNS_PER_FRAME = 1;
 const HEART_PICKUP_SPAWN_MIN_SCORE = 200;
 const HEART_PICKUP_SPAWN_MAX_SCORE = 300;
 const MAX_ACTIVE_HEART_PICKUPS = 2;
@@ -173,7 +175,7 @@ const GHOST_X_MAX = 160;
 const GHOST_DEPTH = -0.5;
 
 const COURSE_SEED = 0xd064755;
-const COURSE_SCHEDULE_VERSION = 2;
+const COURSE_SCHEDULE_VERSION = 3;
 const COURSE_MAX_MS = 10 * 60 * 1000;
 
 function createSeededRng(seed) {
@@ -240,7 +242,7 @@ function buildCourseSchedule(speedMultiplier) {
   const state = { t: 0, score: 0 };
 
   let rockTimer = rng.between(ROCK_SPAWN_INITIAL_MIN_MS, ROCK_SPAWN_INITIAL_MAX_MS);
-  let mudTimer = rng.between(2000, 3500);
+  let mudTimer = rng.between(3500, 5500);
   let heartScoreTarget = rng.between(
     HEART_PICKUP_SPAWN_MIN_SCORE,
     HEART_PICKUP_SPAWN_MAX_SCORE,
@@ -528,9 +530,9 @@ export default class GameScene extends Phaser.Scene {
 
     this.hasStarted = true;
 
-    const now = this.time.now;
-    this.ghostRunStartTime = now;
+    this.gameplayElapsed = 0;
     this.lastGhostSampleTime = 0;
+    this.ghostRunStartTime = this.time.now;
     this.ghostRunSamples = [];
     this.resetGhostFadeState();
     this.ghostLastHearts = MAX_HEARTS;
@@ -664,9 +666,23 @@ export default class GameScene extends Phaser.Scene {
 
   isHazardTooClose(spawnX, displayWidth, others) {
     const halfWidth = displayWidth / 2;
-    return others.getChildren().some(
-      (other) => this.getHazardClearance(spawnX, halfWidth, other) < HAZARD_MIN_GAP_PX,
-    );
+    return others.getChildren().some((other) => {
+      if (!other.active || other.x <= -other.displayWidth) {
+        return false;
+      }
+
+      return this.getHazardClearance(spawnX, halfWidth, other) < HAZARD_MIN_GAP_PX;
+    });
+  }
+
+  getSpawnScrollSpeed() {
+    const mudSlowFactor = this.isInMud ? MUD_SLOW_FACTOR : 1;
+    return this.scrollSpeed * mudSlowFactor;
+  }
+
+  getHazardSpawnX(eventTime, elapsed) {
+    const lateMs = Math.max(0, elapsed - eventTime);
+    return HAZARD_SPAWN_X - this.getSpawnScrollSpeed() * (lateMs / 1000);
   }
 
   setupHeartPickupPhysics(pickup) {
@@ -691,13 +707,13 @@ export default class GameScene extends Phaser.Scene {
     return this.heartPickups?.countActive(true) ?? 0;
   }
 
-  trySpawnCourseEvent(event) {
+  trySpawnCourseEvent(event, elapsed) {
     if (event.type === 'rock') {
-      return this.spawnRock();
+      return this.spawnRockAt(event, elapsed);
     }
 
     if (event.type === 'mud') {
-      return this.spawnMud();
+      return this.spawnMudAt(event, elapsed);
     }
 
     if (event.type === 'heart') {
@@ -710,6 +726,7 @@ export default class GameScene extends Phaser.Scene {
 
   processCourseSpawns(elapsed) {
     let i = this.courseSpawnIndex;
+    let hazardsSpawnedThisFrame = 0;
 
     while (i < this.courseSchedule.length && this.courseSchedule[i].t <= elapsed) {
       if (this.courseSpawnedIndices.has(i)) {
@@ -728,8 +745,19 @@ export default class GameScene extends Phaser.Scene {
         continue;
       }
 
-      if (!this.trySpawnCourseEvent(event)) {
+      if (
+        (event.type === 'rock' || event.type === 'mud') &&
+        hazardsSpawnedThisFrame >= MAX_HAZARD_SPAWNS_PER_FRAME
+      ) {
         break;
+      }
+
+      if (!this.trySpawnCourseEvent(event, elapsed)) {
+        break;
+      }
+
+      if (event.type === 'rock' || event.type === 'mud') {
+        hazardsSpawnedThisFrame += 1;
       }
 
       this.courseSpawnedIndices.add(i);
@@ -944,16 +972,16 @@ export default class GameScene extends Phaser.Scene {
     this.ghostDog.setVisible(false);
   }
 
-  recordGhostSample(time, force = false) {
+  recordGhostSample(force = false) {
     if (!this.hasStarted || this.isGameOver) {
       return;
     }
 
-    if (!force && time - this.lastGhostSampleTime < GHOST_SAMPLE_INTERVAL_MS) {
+    if (!force && this.gameplayElapsed - this.lastGhostSampleTime < GHOST_SAMPLE_INTERVAL_MS) {
       return;
     }
 
-    this.lastGhostSampleTime = time;
+    this.lastGhostSampleTime = this.gameplayElapsed;
     const inMud = this.isDogOnGround() && this.physics.overlap(this.dog, this.mudPatches);
     const inHit = this.hitCooldownMs > 0;
     let runScale = inMud ? MUD_SLOW_FACTOR : 1;
@@ -962,7 +990,7 @@ export default class GameScene extends Phaser.Scene {
     }
 
     this.ghostRunSamples.push({
-      t: time - this.ghostRunStartTime,
+      t: this.gameplayElapsed,
       score: Math.floor(this.score),
       y: this.dog.y,
       tex: this.dog.texture.key,
@@ -1163,7 +1191,7 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
-    const elapsed = time - this.ghostRunStartTime;
+    const elapsed = this.gameplayElapsed;
     const samples = this.ghostBestAtRunStart.samples;
     const deathT = this.ghostBestAtRunStart.deathT;
     const ghostHearts = this.getGhostHeartsAt(samples, elapsed);
@@ -1206,12 +1234,12 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
-    this.recordGhostSample(time);
+    this.recordGhostSample();
 
     const recording = {
       v: GHOST_FORMAT_VERSION,
       finalScore: Math.floor(this.score),
-      durationMs: Math.max(0, time - this.ghostRunStartTime),
+      durationMs: Math.max(0, this.gameplayElapsed),
       deathT: this.findGhostDeathTime(this.ghostRunSamples),
       samples: [...this.ghostRunSamples],
     };
@@ -2105,7 +2133,6 @@ export default class GameScene extends Phaser.Scene {
     this.scrollSpeed = BASE_SCROLL_SPEED * this.speedMultiplier;
     this.score = 0;
     this.displayedScore = -1;
-    this.assignCourseSchedule(this.speedMultiplier);
     this.isInMud = false;
     this.jumpHeld = false;
     this.jumpPressTime = 0;
@@ -2133,8 +2160,7 @@ export default class GameScene extends Phaser.Scene {
     }
     this.applyGhostForNewRun();
     this.ghostRunSamples = [];
-    this.ghostRunStartTime = 0;
-    this.lastGhostSampleTime = 0;
+    this.gameplayElapsed = 0;
     this.resetGhostFadeState();
 
     const sky = this.createParallaxLayer('sky', -20);
@@ -2216,7 +2242,9 @@ export default class GameScene extends Phaser.Scene {
   }
 
   update(time, delta) {
-    this.updateRain(delta);
+    const cappedDelta = Math.min(delta, MAX_FRAME_DELTA_MS);
+
+    this.updateRain(cappedDelta);
     this.updateDogShadow();
 
     if (this.isGameOver) {
@@ -2229,10 +2257,10 @@ export default class GameScene extends Phaser.Scene {
     }
 
     if (this.hitCooldownMs > 0) {
-      this.hitCooldownMs = Math.max(0, this.hitCooldownMs - delta);
+      this.hitCooldownMs = Math.max(0, this.hitCooldownMs - cappedDelta);
     }
 
-    const dt = delta / 1000;
+    const dt = cappedDelta / 1000;
     const onGround = this.isDogOnGround();
 
     const maxSpeed = 420 * this.speedMultiplier;
@@ -2244,8 +2272,8 @@ export default class GameScene extends Phaser.Scene {
     const effectiveScrollSpeed = this.scrollSpeed * mudSlowFactor;
     this.dog.anims.timeScale = mudSlowFactor;
 
-    const elapsed = time - this.ghostRunStartTime;
-    this.processCourseSpawns(elapsed);
+    this.gameplayElapsed += cappedDelta;
+    this.processCourseSpawns(this.gameplayElapsed);
 
     const scrollDelta = effectiveScrollSpeed * dt;
     this.skyLayer.tilePositionX += (scrollDelta * PARALLAX_SKY) / this.skyScale;
@@ -2258,7 +2286,7 @@ export default class GameScene extends Phaser.Scene {
       this.scoreText.setText(displayScore.toString());
     }
 
-    this.updateDayNightCycle(delta);
+    this.updateDayNightCycle(cappedDelta);
 
     this.obstacles.getChildren().forEach((rock) => {
       rock.x -= effectiveScrollSpeed * dt;
@@ -2301,7 +2329,7 @@ export default class GameScene extends Phaser.Scene {
         this.groundJumpActive = false;
       }
     } else {
-      this.coyoteMs = Math.max(0, this.coyoteMs - delta);
+      this.coyoteMs = Math.max(0, this.coyoteMs - cappedDelta);
     }
 
     if (this.jumpBuffered && this.canJump()) {
@@ -2314,7 +2342,7 @@ export default class GameScene extends Phaser.Scene {
     this.applyJumpPhysics(dt);
     this.checkRockCollisions();
     this.updateDogAnimation(this.isDogOnGround());
-    this.recordGhostSample(time);
+    this.recordGhostSample();
     this.updateGhostRace(time);
   }
 
@@ -2338,15 +2366,20 @@ export default class GameScene extends Phaser.Scene {
     this.dog.setGravityY(rising ? GRAVITY_RISE : GRAVITY_FALL);
   }
 
-  spawnRock() {
+  spawnRockAt(event, elapsed) {
+    const spawnX = this.getHazardSpawnX(event.t, elapsed);
+    if (spawnX < -OBSTACLE_DISPLAY_W) {
+      return true;
+    }
+
     if (
-      this.isHazardTooClose(HAZARD_SPAWN_X, OBSTACLE_DISPLAY_W, this.obstacles) ||
-      this.isHazardTooClose(HAZARD_SPAWN_X, OBSTACLE_DISPLAY_W, this.mudPatches)
+      this.isHazardTooClose(spawnX, OBSTACLE_DISPLAY_W, this.obstacles) ||
+      this.isHazardTooClose(spawnX, OBSTACLE_DISPLAY_W, this.mudPatches)
     ) {
       return false;
     }
 
-    const rock = this.obstacles.create(HAZARD_SPAWN_X, GROUND_SURFACE + ROCK_Y_OFFSET, 'obstacle');
+    const rock = this.obstacles.create(spawnX, GROUND_SURFACE + ROCK_Y_OFFSET, 'obstacle');
     rock.setOrigin(0.5, 1);
     rock.setDisplaySize(OBSTACLE_DISPLAY_W, OBSTACLE_DISPLAY_H);
     rock.y = GROUND_SURFACE + ROCK_Y_OFFSET;
@@ -2354,15 +2387,20 @@ export default class GameScene extends Phaser.Scene {
     return true;
   }
 
-  spawnMud() {
+  spawnMudAt(event, elapsed) {
+    const spawnX = this.getHazardSpawnX(event.t, elapsed);
+    if (spawnX < -MUD_DISPLAY_W) {
+      return true;
+    }
+
     if (
-      this.isHazardTooClose(HAZARD_SPAWN_X, MUD_DISPLAY_W, this.obstacles) ||
-      this.isHazardTooClose(HAZARD_SPAWN_X, MUD_DISPLAY_W, this.mudPatches)
+      this.isHazardTooClose(spawnX, MUD_DISPLAY_W, this.obstacles) ||
+      this.isHazardTooClose(spawnX, MUD_DISPLAY_W, this.mudPatches)
     ) {
       return false;
     }
 
-    const mud = this.mudPatches.create(HAZARD_SPAWN_X, GROUND_SURFACE + MUD_Y_OFFSET, 'mud');
+    const mud = this.mudPatches.create(spawnX, GROUND_SURFACE + MUD_Y_OFFSET, 'mud');
     mud.setOrigin(0.5, 1);
     mud.setDisplaySize(MUD_DISPLAY_W, MUD_DISPLAY_H);
     mud.setDepth(-1);
@@ -2538,7 +2576,7 @@ export default class GameScene extends Phaser.Scene {
     this.updateHeartsHud();
     this.hitCooldownMs = HIT_COOLDOWN_MS;
     this.dog.x = DOG_X;
-    this.recordGhostSample(this.time.now, true);
+    this.recordGhostSample(true);
 
     if (this.hearts <= 0) {
       this.triggerGameOver();
