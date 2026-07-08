@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
 import GameScene from './scenes/GameScene.js';
+import LoadingScene from './scenes/LoadingScene.js';
+import TitleScene from './scenes/TitleScene.js';
 
 function showLoadError(message) {
   const el = document.getElementById('load-error');
@@ -68,7 +70,7 @@ const config = {
   audio: {
     noAudio: true,
   },
-  scene: [GameScene],
+  scene: [TitleScene, LoadingScene, GameScene],
 };
 
 let game;

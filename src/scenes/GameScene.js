@@ -5,6 +5,7 @@ import {
   HK_WEATHER_EFFECTS,
   resolveHKWeatherEffect,
 } from '../services/hkWeather.js';
+import { queueGameAssets } from './queueGameAssets.js';
 
 const WIDTH = 480;
 const HEIGHT = 800;
@@ -24,20 +25,19 @@ const MUD_DISPLAY_W = Math.round((MUD_TEXTURE_W / MUD_TEXTURE_H) * MUD_DISPLAY_H
 const MUD_SLOW_FACTOR = 0.5;
 const MUD_SPAWN_MIN_MS = 4000;
 const MUD_SPAWN_MAX_MS = 6500;
-const ROCK_SPAWN_X = WIDTH + 40;
 const ROCK_SPAWN_INITIAL_MIN_MS = 1400;
 const ROCK_SPAWN_INITIAL_MAX_MS = 2600;
 const ROCK_SPAWN_MIN_MS = 2200;
 const ROCK_SPAWN_MAX_MS = 4200;
 const ROCK_SPAWN_MIN_FLOOR_MS = 1400;
 const ROCK_SPAWN_MAX_FLOOR_MS = 2600;
-const MUD_SPAWN_X = WIDTH + 60;
+const HAZARD_SPAWN_X = WIDTH + 40;
 const HAZARD_MIN_GAP_PX = 100;
 const HAZARD_RETRY_MS = 450;
 const HEART_PICKUP_SPAWN_MIN_SCORE = 200;
 const HEART_PICKUP_SPAWN_MAX_SCORE = 300;
+const MAX_ACTIVE_HEART_PICKUPS = 2;
 const HEART_PICKUP_SPAWN_X = WIDTH + 120;
-const HEART_PICKUP_PAIR_GAP_X = 64;
 const HEART_PICKUP_SIZE = 50;
 const HEART_PICKUP_Y_MIN = 340;
 const HEART_PICKUP_Y_MAX = 460;
@@ -119,7 +119,6 @@ const HEARTS_BORDER = 0x6d5a55;
 const HEARTS_BORDER_W = 2;
 const HEARTS_HUD_Y = 45;
 const SCORE_TEXT_Y = 73;
-const TAP_TO_START_Y = HEIGHT / 2;
 const HIT_COOLDOWN_MS = 1400;
 const BUMP_SHAKE_DURATION = 160;
 const BUMP_SHAKE_INTENSITY = 0.012;
@@ -174,6 +173,7 @@ const GHOST_X_MAX = 160;
 const GHOST_DEPTH = -0.5;
 
 const COURSE_SEED = 0xd064755;
+const COURSE_SCHEDULE_VERSION = 2;
 const COURSE_MAX_MS = 10 * 60 * 1000;
 
 function createSeededRng(seed) {
@@ -259,9 +259,7 @@ function buildCourseSchedule(speedMultiplier) {
       events.push({
         type: 'heart',
         t: state.t,
-        count: rng.between(1, 2),
         baseY: rng.between(HEART_PICKUP_Y_MIN, HEART_PICKUP_Y_MAX),
-        yJitter: rng.between(-24, 24),
       });
       heartScoreTarget += rng.between(
         HEART_PICKUP_SPAWN_MIN_SCORE,
@@ -273,7 +271,7 @@ function buildCourseSchedule(speedMultiplier) {
       const activeMud = pruneSimHazards(muds, state.t, speedMultiplier);
       if (
         isSimHazardTooClose(
-          ROCK_SPAWN_X,
+          HAZARD_SPAWN_X,
           OBSTACLE_DISPLAY_W / 2,
           activeMud,
           state.t,
@@ -285,7 +283,7 @@ function buildCourseSchedule(speedMultiplier) {
         events.push({ type: 'rock', t: state.t });
         rocks.push({
           spawnT: state.t,
-          spawnX: ROCK_SPAWN_X,
+          spawnX: HAZARD_SPAWN_X,
           halfWidth: OBSTACLE_DISPLAY_W / 2,
           scoreAtSpawn: state.score,
         });
@@ -307,7 +305,7 @@ function buildCourseSchedule(speedMultiplier) {
       const activeRocks = pruneSimHazards(rocks, state.t, speedMultiplier);
       if (
         isSimHazardTooClose(
-          MUD_SPAWN_X,
+          HAZARD_SPAWN_X,
           MUD_DISPLAY_W / 2,
           activeRocks,
           state.t,
@@ -319,7 +317,7 @@ function buildCourseSchedule(speedMultiplier) {
         events.push({ type: 'mud', t: state.t });
         muds.push({
           spawnT: state.t,
-          spawnX: MUD_SPAWN_X,
+          spawnX: HAZARD_SPAWN_X,
           halfWidth: MUD_DISPLAY_W / 2,
           scoreAtSpawn: state.score,
         });
@@ -335,11 +333,18 @@ function buildCourseSchedule(speedMultiplier) {
 const courseScheduleCache = new Map();
 
 function getCourseSchedule(speedMultiplier) {
-  if (!courseScheduleCache.has(speedMultiplier)) {
-    courseScheduleCache.set(speedMultiplier, buildCourseSchedule(speedMultiplier));
+  const cacheKey = `${COURSE_SCHEDULE_VERSION}:${speedMultiplier}`;
+  if (!courseScheduleCache.has(cacheKey)) {
+    courseScheduleCache.set(cacheKey, buildCourseSchedule(speedMultiplier));
   }
 
-  return courseScheduleCache.get(speedMultiplier);
+  return courseScheduleCache.get(cacheKey);
+}
+
+function resetCourseScheduleRuntimeState(schedule) {
+  for (const event of schedule) {
+    delete event.spawned;
+  }
 }
 
 export default class GameScene extends Phaser.Scene {
@@ -354,37 +359,24 @@ export default class GameScene extends Phaser.Scene {
     super('GameScene');
   }
 
+  init(data) {
+    this.launchGhostRace = typeof data?.ghostRace === 'boolean' ? data.ghostRace : null;
+  }
+
   preload() {
-    this.load.image('sky', 'assets/front.png');
-    this.load.image('ground', 'assets/ground.png');
-    this.load.image('obstacle', 'assets/rock.png');
-    this.load.image('mud', 'assets/mud.png');
-
-    for (let i = 0; i < DOG_FRAME_COUNTS.run; i++) {
-      this.load.image(`run_${i}`, `assets/dog/run_${i}.png`);
-    }
-
-    for (let i = 0; i < DOG_FRAME_COUNTS.jump; i++) {
-      this.load.image(`jump_${i}`, `assets/dog/jump_${i}.png`);
-    }
-
-    for (const i of DOG_FRAME_COUNTS.sleep) {
-      this.load.image(`sleep_${i}`, `assets/dog/sleep_${i}.png`);
-    }
-
-    this.load.image('heart-full', 'assets/ui/heart-full.png');
-    this.load.image('heart-empty', 'assets/ui/heart-empty.png');
-    this.load.image('heart-pickup', 'assets/heart-pickup.png');
+    queueGameAssets(this.load, this.textures);
   }
 
   createHeartsHud() {
+    this.heartsHud?.destroy(true);
+
     const hudWidth = HEARTS_PAD_X * 2 + HEART_W * MAX_HEARTS + HEART_GAP * (MAX_HEARTS - 1);
     const hudHeight = HEARTS_PAD_Y * 2 + HEART_H;
     const radius = hudHeight / 2;
 
     this.heartsHud = this.add.container(WIDTH / 2, HEARTS_HUD_Y).setScrollFactor(0).setDepth(HEARTS_DEPTH);
 
-    const bg = this.add.graphics();
+    const bg = this.make.graphics({ add: false });
     bg.fillStyle(HEARTS_BG, 1);
     bg.lineStyle(HEARTS_BORDER_W, HEARTS_BORDER, 1);
     bg.fillRoundedRect(-hudWidth / 2, -hudHeight / 2, hudWidth, hudHeight, radius);
@@ -395,9 +387,13 @@ export default class GameScene extends Phaser.Scene {
     const startX = -hudWidth / 2 + HEARTS_PAD_X + HEART_W / 2;
 
     for (let i = 0; i < MAX_HEARTS; i++) {
-      const heart = this.add
-        .image(startX + i * (HEART_W + HEART_GAP), 0, 'heart-full')
-        .setDisplaySize(HEART_W, HEART_H);
+      const heart = this.make.image({
+        x: startX + i * (HEART_W + HEART_GAP),
+        y: 0,
+        key: 'heart-full',
+        add: false,
+      });
+      heart.setDisplaySize(HEART_W, HEART_H);
       this.heartsHud.add(heart);
       this.heartIcons.push(heart);
     }
@@ -495,32 +491,10 @@ export default class GameScene extends Phaser.Scene {
     pickup.destroy();
 
     if (this.hearts < MAX_HEARTS) {
-      this.hearts += 1;
+      this.hearts = Math.min(this.hearts + 1, MAX_HEARTS);
       this.updateHeartsHud();
       this.playHeartCollectFeedback();
     }
-  }
-
-  createTapToStartOverlay() {
-    this.tapToStartText = this.add
-      .text(WIDTH / 2, TAP_TO_START_Y, 'Tap to Start', {
-        fontFamily: 'Arial, sans-serif',
-        fontSize: '36px',
-        color: '#ffffff',
-        stroke: '#000000',
-        strokeThickness: 6,
-      })
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setDepth(HEARTS_DEPTH + 2);
-
-    this.tweens.add({
-      targets: this.tapToStartText,
-      alpha: 0.4,
-      duration: 700,
-      yoyo: true,
-      repeat: -1,
-    });
   }
 
   loadGhostRaceEnabled() {
@@ -554,19 +528,13 @@ export default class GameScene extends Phaser.Scene {
 
     this.hasStarted = true;
 
-    if (this.tapToStartText) {
-      this.tweens.killTweensOf(this.tapToStartText);
-      this.tapToStartText.destroy();
-      this.tapToStartText = null;
-    }
-
     const now = this.time.now;
     this.ghostRunStartTime = now;
     this.lastGhostSampleTime = 0;
     this.ghostRunSamples = [];
     this.resetGhostFadeState();
     this.ghostLastHearts = MAX_HEARTS;
-    this.courseSpawnIndex = 0;
+    this.assignCourseSchedule(this.speedMultiplier);
     this.physics.resume();
   }
 
@@ -708,36 +676,74 @@ export default class GameScene extends Phaser.Scene {
   }
 
   spawnHeartPickupsFromEvent(event) {
-    const count = event.count;
-    const baseY = event.baseY;
-    const pairStartX =
-      count === 1 ? HEART_PICKUP_SPAWN_X : HEART_PICKUP_SPAWN_X - HEART_PICKUP_PAIR_GAP_X / 2;
+    const pickup = this.heartPickups.create(
+      HEART_PICKUP_SPAWN_X,
+      event.baseY,
+      'heart-pickup',
+    );
+    pickup.setOrigin(0.5, 0.5);
+    pickup.setDisplaySize(HEART_PICKUP_SIZE, HEART_PICKUP_SIZE);
+    pickup.setDepth(4);
+    this.setupHeartPickupPhysics(pickup);
+  }
 
-    for (let i = 0; i < count; i++) {
-      const x = pairStartX + i * HEART_PICKUP_PAIR_GAP_X;
-      const y = baseY + (count === 2 ? event.yJitter : 0);
-      const pickup = this.heartPickups.create(x, y, 'heart-pickup');
-      pickup.setOrigin(0.5, 0.5);
-      pickup.setDisplaySize(HEART_PICKUP_SIZE, HEART_PICKUP_SIZE);
-      pickup.setDepth(4);
-      this.setupHeartPickupPhysics(pickup);
+  getActiveHeartPickupCount() {
+    return this.heartPickups?.countActive(true) ?? 0;
+  }
+
+  trySpawnCourseEvent(event) {
+    if (event.type === 'rock') {
+      return this.spawnRock();
     }
+
+    if (event.type === 'mud') {
+      return this.spawnMud();
+    }
+
+    if (event.type === 'heart') {
+      this.spawnHeartPickupsFromEvent(event);
+      return true;
+    }
+
+    return true;
   }
 
   processCourseSpawns(elapsed) {
-    while (
-      this.courseSpawnIndex < this.courseSchedule.length &&
-      this.courseSchedule[this.courseSpawnIndex].t <= elapsed
-    ) {
-      const event = this.courseSchedule[this.courseSpawnIndex++];
-      if (event.type === 'rock') {
-        this.spawnRock();
-      } else if (event.type === 'mud') {
-        this.spawnMud();
-      } else if (event.type === 'heart') {
-        this.spawnHeartPickupsFromEvent(event);
+    let i = this.courseSpawnIndex;
+
+    while (i < this.courseSchedule.length && this.courseSchedule[i].t <= elapsed) {
+      if (this.courseSpawnedIndices.has(i)) {
+        i++;
+        continue;
       }
+
+      const event = this.courseSchedule[i];
+
+      if (
+        event.type === 'heart' &&
+        this.getActiveHeartPickupCount() >= MAX_ACTIVE_HEART_PICKUPS
+      ) {
+        this.courseSpawnedIndices.add(i);
+        i++;
+        continue;
+      }
+
+      if (!this.trySpawnCourseEvent(event)) {
+        break;
+      }
+
+      this.courseSpawnedIndices.add(i);
+      i++;
     }
+
+    this.courseSpawnIndex = i;
+  }
+
+  assignCourseSchedule(speedMultiplier) {
+    this.courseSchedule = getCourseSchedule(speedMultiplier);
+    resetCourseScheduleRuntimeState(this.courseSchedule);
+    this.courseSpawnIndex = 0;
+    this.courseSpawnedIndices = new Set();
   }
 
   createDogShadow() {
@@ -1421,7 +1427,7 @@ export default class GameScene extends Phaser.Scene {
   setSpeedMode(speedKey) {
     GameScene.devSpeed = speedKey;
     this.speedMultiplier = this.getSpeedMultiplier();
-    this.courseSchedule = getCourseSchedule(this.speedMultiplier);
+    this.assignCourseSchedule(this.speedMultiplier);
     const minSpeed = BASE_SCROLL_SPEED * this.speedMultiplier;
     this.scrollSpeed = Math.max(this.scrollSpeed, minSpeed);
     this.refreshDevMenu();
@@ -1831,13 +1837,8 @@ export default class GameScene extends Phaser.Scene {
         return;
       }
 
-      if (!this.hasStarted) {
-        this.startGameplay();
-        return;
-      }
-
       if (this.isGameOver) {
-        this.scene.restart();
+        this.scene.start('TitleScene');
         return;
       }
 
@@ -2104,8 +2105,7 @@ export default class GameScene extends Phaser.Scene {
     this.scrollSpeed = BASE_SCROLL_SPEED * this.speedMultiplier;
     this.score = 0;
     this.displayedScore = -1;
-    this.courseSchedule = getCourseSchedule(this.speedMultiplier);
-    this.courseSpawnIndex = 0;
+    this.assignCourseSchedule(this.speedMultiplier);
     this.isInMud = false;
     this.jumpHeld = false;
     this.jumpPressTime = 0;
@@ -2123,8 +2123,14 @@ export default class GameScene extends Phaser.Scene {
     this.liveSkyColor = '#87ceeb';
     this.liveWeatherLabel = null;
 
-    this.ghostRaceEnabled = this.loadGhostRaceEnabled();
-    GameScene.devGhostRace = this.ghostRaceEnabled ? 'on' : 'off';
+    if (typeof this.launchGhostRace === 'boolean') {
+      this.ghostRaceEnabled = this.launchGhostRace;
+      this.saveGhostRaceEnabled(this.launchGhostRace);
+      GameScene.devGhostRace = this.launchGhostRace ? 'on' : 'off';
+    } else {
+      this.ghostRaceEnabled = this.loadGhostRaceEnabled();
+      GameScene.devGhostRace = this.ghostRaceEnabled ? 'on' : 'off';
+    }
     this.applyGhostForNewRun();
     this.ghostRunSamples = [];
     this.ghostRunStartTime = 0;
@@ -2206,8 +2212,7 @@ export default class GameScene extends Phaser.Scene {
     this.cursors.up.on('up', () => this.endJump());
 
     this.hasStarted = false;
-    this.physics.pause();
-    this.createTapToStartOverlay();
+    this.startGameplay();
   }
 
   update(time, delta) {
@@ -2219,15 +2224,6 @@ export default class GameScene extends Phaser.Scene {
       this.dog.y = DOG_SLEEP_Y;
       if (!this.dog.anims.isPlaying || this.dog.anims.currentAnim?.key !== 'dead') {
         this.dog.play('dead', true);
-      }
-      return;
-    }
-
-    if (!this.hasStarted) {
-      this.dog.x = DOG_X;
-      this.dog.y = DOG_RUN_GROUND_Y;
-      if (!this.dog.anims.isPlaying || this.dog.anims.currentAnim?.key !== 'run') {
-        this.dog.play('run', true);
       }
       return;
     }
@@ -2343,20 +2339,36 @@ export default class GameScene extends Phaser.Scene {
   }
 
   spawnRock() {
-    const rock = this.obstacles.create(ROCK_SPAWN_X, GROUND_SURFACE + ROCK_Y_OFFSET, 'obstacle');
+    if (
+      this.isHazardTooClose(HAZARD_SPAWN_X, OBSTACLE_DISPLAY_W, this.obstacles) ||
+      this.isHazardTooClose(HAZARD_SPAWN_X, OBSTACLE_DISPLAY_W, this.mudPatches)
+    ) {
+      return false;
+    }
+
+    const rock = this.obstacles.create(HAZARD_SPAWN_X, GROUND_SURFACE + ROCK_Y_OFFSET, 'obstacle');
     rock.setOrigin(0.5, 1);
     rock.setDisplaySize(OBSTACLE_DISPLAY_W, OBSTACLE_DISPLAY_H);
     rock.y = GROUND_SURFACE + ROCK_Y_OFFSET;
     this.setupRockPhysics(rock);
+    return true;
   }
 
   spawnMud() {
-    const mud = this.mudPatches.create(MUD_SPAWN_X, GROUND_SURFACE + MUD_Y_OFFSET, 'mud');
+    if (
+      this.isHazardTooClose(HAZARD_SPAWN_X, MUD_DISPLAY_W, this.obstacles) ||
+      this.isHazardTooClose(HAZARD_SPAWN_X, MUD_DISPLAY_W, this.mudPatches)
+    ) {
+      return false;
+    }
+
+    const mud = this.mudPatches.create(HAZARD_SPAWN_X, GROUND_SURFACE + MUD_Y_OFFSET, 'mud');
     mud.setOrigin(0.5, 1);
     mud.setDisplaySize(MUD_DISPLAY_W, MUD_DISPLAY_H);
     mud.setDepth(-1);
     mud.y = GROUND_SURFACE + MUD_Y_OFFSET;
     this.setupMudPhysics(mud);
+    return true;
   }
 
   canJump() {
@@ -2509,8 +2521,8 @@ export default class GameScene extends Phaser.Scene {
       .setScrollFactor(0)
       .setDepth(HEARTS_DEPTH + 1);
 
-    this.input.keyboard.once('keydown-SPACE', () => this.scene.restart());
-    this.input.keyboard.once('keydown-UP', () => this.scene.restart());
+    this.input.keyboard.once('keydown-SPACE', () => this.scene.start('TitleScene'));
+    this.input.keyboard.once('keydown-UP', () => this.scene.start('TitleScene'));
   }
 
   handleCollision(_dog, rock) {
