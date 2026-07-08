@@ -11,7 +11,6 @@ const LOGO_TOP = 40;
 
 const BORDER_COLOR = 0x6d5a55;
 const BTN_YELLOW = 0xffe500;
-
 const sx = (value) => (value * WIDTH) / FIGMA_W;
 const sy = (value) => (value * HEIGHT) / FIGMA_H;
 

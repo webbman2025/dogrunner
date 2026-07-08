@@ -13,22 +13,11 @@ function showLoadError(message) {
   el.textContent = message;
 }
 
-function lockViewportHeight() {
-  const height = window.innerHeight;
-  document.documentElement.style.setProperty('--app-height', `${height}px`);
-  document.body.style.height = `${height}px`;
-
-  const game = document.getElementById('game');
-  if (game) {
-    game.style.height = `${height}px`;
+function refreshGameLayout() {
+  if (game?.scale) {
+    game.scale.refresh();
   }
 }
-
-lockViewportHeight();
-window.addEventListener('resize', lockViewportHeight);
-window.addEventListener('orientationchange', () => {
-  setTimeout(lockViewportHeight, 150);
-});
 
 document.addEventListener(
   'touchmove',
@@ -42,7 +31,7 @@ const config = {
   type: Phaser.AUTO,
   width: 480,
   height: 800,
-  backgroundColor: '#87ceeb',
+  backgroundColor: '#000000',
   physics: {
     default: 'arcade',
     arcade: {
@@ -60,12 +49,12 @@ const config = {
     roundPixels: true,
   },
   scale: {
-    mode: Phaser.Scale.ENVELOP,
+    mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
     parent: 'game',
     width: 480,
     height: 800,
-    expandParent: false,
+    expandParent: true,
   },
   audio: {
     noAudio: true,
@@ -78,16 +67,17 @@ let game;
 try {
   game = new Phaser.Game(config);
 
-  window.addEventListener('resize', () => {
-    game.scale.refresh();
+  refreshGameLayout();
+
+  window.addEventListener('resize', refreshGameLayout);
+  window.addEventListener('orientationchange', () => {
+    setTimeout(refreshGameLayout, 150);
   });
 
-  window.addEventListener('orientationchange', () => {
-    setTimeout(() => {
-      lockViewportHeight();
-      game.scale.refresh();
-    }, 150);
-  });
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', refreshGameLayout);
+    window.visualViewport.addEventListener('scroll', refreshGameLayout);
+  }
 } catch (error) {
   showLoadError(`Game failed to start: ${error.message}`);
 }
