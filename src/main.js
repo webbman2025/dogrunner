@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import GameScene from './scenes/GameScene.js';
 import LoadingScene from './scenes/LoadingScene.js';
+import SelectPetScene from './scenes/SelectPetScene.js';
 import TitleScene from './scenes/TitleScene.js';
 
 function showLoadError(message) {
@@ -59,7 +60,7 @@ const config = {
   audio: {
     noAudio: true,
   },
-  scene: [TitleScene, LoadingScene, GameScene],
+  scene: [TitleScene, SelectPetScene, LoadingScene, GameScene],
 };
 
 let game;

@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { getPetConfig, loadSelectedPet, normalizePet } from '../petConfig.js';
 import { hidePauseMenu } from '../pauseMenuDom.js';
 import { queueGameAssets } from './queueGameAssets.js';
 
@@ -12,13 +13,9 @@ const BAR_FILL = 0xff0000;
 const sx = (value) => (value * WIDTH) / FIGMA_W;
 const sy = (value) => (value * HEIGHT) / FIGMA_H;
 
-const DOG_X = 89 + 196 / 2;
-const DOG_Y = 295 + 196 / 2;
-const DOG_SIZE = 160;
-const SHADOW_X = 120 + 133 / 2;
-const SHADOW_Y = 438 + 11 / 2;
-const SHADOW_W = 120;
-const SHADOW_H = 11;
+const PET_X = 89 + 196 / 2;
+const PET_Y = 295 + 196 / 2;
+const PET_SIZE = 160;
 const BAR_X = 66;
 const BAR_Y = 482;
 const BAR_W = 243;
@@ -34,13 +31,17 @@ export default class LoadingScene extends Phaser.Scene {
   }
 
   init(data) {
+    const pet = normalizePet(data?.pet ?? loadSelectedPet());
+    this.pet = pet;
+    this.petConfig = getPetConfig(pet);
     this.pendingGameData = {
       ghostRace: Boolean(data?.ghostRace),
+      pet,
     };
   }
 
   preload() {
-    queueGameAssets(this.load, this.textures, { includeRunFrames: true });
+    queueGameAssets(this.load, this.textures, { includeRunFrames: true, pet: this.pet });
   }
 
   create() {
@@ -50,35 +51,36 @@ export default class LoadingScene extends Phaser.Scene {
 
     this.cameras.main.setBackgroundColor(LOADING_BG);
 
-    if (!this.anims.exists('loading-run')) {
-      this.anims.create({
-        key: 'loading-run',
-        frames: Array.from({ length: 8 }, (_, i) => ({ key: `run_${i}` })),
-        frameRate: 12,
-        repeat: -1,
-      });
+    if (this.anims.exists('loading-run')) {
+      this.anims.remove('loading-run');
     }
 
-    this.createDog();
+    this.anims.create({
+      key: 'loading-run',
+      frames: Array.from({ length: this.petConfig.runFrameCount }, (_, i) => ({ key: `run_${i}` })),
+      frameRate: 12,
+      repeat: -1,
+    });
+
+    this.createPetPreview();
     this.createProgressBar();
     this.beginMockLoad();
   }
 
-  createDog() {
-    const dogSize = sx(DOG_SIZE);
-    const shadowW = sx(SHADOW_W);
-    const shadowH = sx(SHADOW_H);
+  createPetPreview() {
+    const petSize = sx(PET_SIZE);
+    const shadow = this.petConfig.shadow.loading;
 
     this.add
-      .ellipse(sx(SHADOW_X), sy(SHADOW_Y), shadowW, shadowH, 0x000000, 0.6)
+      .ellipse(sx(shadow.x), sy(shadow.y), sx(shadow.width), sy(shadow.height), 0x000000, shadow.alpha)
       .setDepth(1);
 
-    this.loadingDog = this.add
-      .sprite(sx(DOG_X), sy(DOG_Y), 'run_0')
-      .setDisplaySize(dogSize, dogSize)
+    this.loadingPet = this.add
+      .sprite(sx(PET_X), sy(PET_Y), 'run_0')
+      .setDisplaySize(petSize, petSize)
       .setDepth(2);
 
-    this.loadingDog.play('loading-run');
+    this.loadingPet.play('loading-run');
   }
 
   createProgressBar() {
@@ -154,7 +156,7 @@ export default class LoadingScene extends Phaser.Scene {
       return;
     }
 
-    this.loadingDog?.anims.stop();
+    this.loadingPet?.anims.stop();
     this.scene.start('GameScene', this.pendingGameData);
   }
 }

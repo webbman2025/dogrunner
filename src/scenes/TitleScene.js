@@ -205,6 +205,6 @@ export default class TitleScene extends Phaser.Scene {
 
   startGame({ ghost }) {
     this.saveGhostRaceEnabled(ghost);
-    this.scene.start('LoadingScene', { ghostRace: ghost });
+    this.scene.start('SelectPetScene', { ghostRace: ghost });
   }
 }

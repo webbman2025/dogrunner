@@ -1,13 +1,22 @@
-const DOG_RUN_FRAME_COUNT = 8;
-const DOG_JUMP_FRAME_COUNT = 5;
-const DOG_SLEEP_FRAMES = [0, 1, 3];
+import { getPetConfig, normalizePet, PET_TYPES } from '../petConfig.js';
 
-export function queueGameAssets(loader, textureManager, { includeRunFrames = true } = {}) {
+export function queueGameAssets(
+  loader,
+  textureManager,
+  { includeRunFrames = true, pet = PET_TYPES.dog } = {},
+) {
+  const config = getPetConfig(pet);
   const has = (key) => textureManager.exists(key);
   const image = (key, url) => {
     if (!has(key)) {
       loader.image(key, url);
     }
+  };
+  const petImage = (key, url) => {
+    if (has(key)) {
+      textureManager.remove(key);
+    }
+    loader.image(key, url);
   };
 
   image('sky', 'assets/front.png');
@@ -16,17 +25,17 @@ export function queueGameAssets(loader, textureManager, { includeRunFrames = tru
   image('mud', 'assets/mud.png');
 
   if (includeRunFrames) {
-    for (let i = 0; i < DOG_RUN_FRAME_COUNT; i++) {
-      image(`run_${i}`, `assets/dog/run_${i}.png`);
+    for (let i = 0; i < config.runFrameCount; i++) {
+      petImage(`run_${i}`, config.assetPaths.run(i));
     }
   }
 
-  for (let i = 0; i < DOG_JUMP_FRAME_COUNT; i++) {
-    image(`jump_${i}`, `assets/dog/jump_${i}.png`);
+  for (let i = 0; i < config.jumpFrameCount; i++) {
+    petImage(`jump_${i}`, config.assetPaths.jump(i));
   }
 
-  for (const i of DOG_SLEEP_FRAMES) {
-    image(`sleep_${i}`, `assets/dog/sleep_${i}.png`);
+  for (const i of config.sleepFrames) {
+    petImage(`sleep_${i}`, config.assetPaths.sleep(i));
   }
 
   image('heart-full', 'assets/ui/heart-full.png');
@@ -34,12 +43,14 @@ export function queueGameAssets(loader, textureManager, { includeRunFrames = tru
   image('heart-pickup', 'assets/heart-pickup.png');
 }
 
-export function areGameAssetsReady(textureManager) {
+export function areGameAssetsReady(textureManager, pet = PET_TYPES.dog) {
+  const config = getPetConfig(pet);
+
   if (!textureManager.exists('sky') || !textureManager.exists('ground')) {
     return false;
   }
 
-  for (let i = 0; i < DOG_RUN_FRAME_COUNT; i++) {
+  for (let i = 0; i < config.runFrameCount; i++) {
     if (!textureManager.exists(`run_${i}`)) {
       return false;
     }
@@ -47,3 +58,5 @@ export function areGameAssetsReady(textureManager) {
 
   return true;
 }
+
+export { normalizePet };

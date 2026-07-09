@@ -5,13 +5,14 @@ import {
   HK_WEATHER_EFFECTS,
   resolveHKWeatherEffect,
 } from '../services/hkWeather.js';
-import { queueGameAssets } from './queueGameAssets.js';
+import { queueGameAssets, areGameAssetsReady } from './queueGameAssets.js';
 import {
   clearPauseMenuHandlers,
   hidePauseMenu,
   initPauseMenu,
   showPauseMenu,
 } from '../pauseMenuDom.js';
+import { getPetConfig, loadSelectedPet, normalizePet } from '../petConfig.js';
 
 const WIDTH = 480;
 const HEIGHT = 800;
@@ -102,13 +103,10 @@ const MUD_HITBOX = {
   h: 32,
 };
 const DOG_SHADOW_DEPTH = -1;
-const DOG_SHADOW_WIDTH = 120;
-const DOG_SHADOW_HEIGHT = 14;
-const DOG_SHADOW_Y_OFFSET = -30;
-const ROCK_Y_OFFSET = DOG_SHADOW_Y_OFFSET;
-const MUD_Y_OFFSET = -15;
 const DOG_SHADOW_MAX_HEIGHT = 420;
 const DOG_SHADOW_MIN_SCALE = 0.22;
+const ROCK_Y_OFFSET = -30;
+const MUD_Y_OFFSET = -15;
 const RAIN_BACK_DEPTH = 3;
 const RAIN_FRONT_DEPTH = 9;
 const STORM_OVERLAY_DEPTH = -4;
@@ -140,11 +138,6 @@ const BUMP_SHAKE_DURATION = 160;
 const BUMP_SHAKE_INTENSITY = 0.012;
 const BUMP_SQUASH_X = 1.14;
 const BUMP_SQUASH_Y = 0.84;
-const DOG_FRAME_COUNTS = {
-  run: 8,
-  jump: 5,
-  sleep: [0, 1, 3],
-};
 
 const WEATHER_MODES = {
   DRY: 'dry',
@@ -377,10 +370,14 @@ export default class GameScene extends Phaser.Scene {
 
   init(data) {
     this.launchGhostRace = typeof data?.ghostRace === 'boolean' ? data.ghostRace : null;
+    this.launchPet = data?.pet ? normalizePet(data.pet) : null;
   }
 
   preload() {
-    queueGameAssets(this.load, this.textures);
+    const pet = normalizePet(this.launchPet ?? loadSelectedPet());
+    if (!areGameAssetsReady(this.textures, pet)) {
+      queueGameAssets(this.load, this.textures, { includeRunFrames: true, pet });
+    }
   }
 
   createHeartsHud() {
@@ -581,9 +578,17 @@ export default class GameScene extends Phaser.Scene {
     });
   }
 
-  createDogAnimations() {
-    const runFrames = Array.from({ length: DOG_FRAME_COUNTS.run }, (_, i) => ({ key: `run_${i}` }));
-    const sleepFrames = DOG_FRAME_COUNTS.sleep.map((i) => ({ key: `sleep_${i}` }));
+  createPetAnimations() {
+    const { runFrameCount, sleepFrames } = this.petConfig;
+
+    for (const key of ['run', 'jump_launch', 'dead']) {
+      if (this.anims.exists(key)) {
+        this.anims.remove(key);
+      }
+    }
+
+    const runFrames = Array.from({ length: runFrameCount }, (_, i) => ({ key: `run_${i}` }));
+    const sleepAnimFrames = sleepFrames.map((i) => ({ key: `sleep_${i}` }));
 
     this.anims.create({
       key: 'run',
@@ -601,7 +606,7 @@ export default class GameScene extends Phaser.Scene {
 
     this.anims.create({
       key: 'dead',
-      frames: sleepFrames,
+      frames: sleepAnimFrames,
       frameRate: 8,
       repeat: -1,
     });
@@ -791,13 +796,15 @@ export default class GameScene extends Phaser.Scene {
   }
 
   createDogShadow() {
+    const shadow = this.petConfig.shadow.game;
+
     this.dogShadow = this.add.ellipse(
-      DOG_X,
-      GROUND_SURFACE + DOG_SHADOW_Y_OFFSET,
-      DOG_SHADOW_WIDTH,
-      DOG_SHADOW_HEIGHT,
+      DOG_X + shadow.xOffset,
+      GROUND_SURFACE + shadow.yOffset,
+      shadow.width,
+      shadow.height,
       0x000000,
-      0.36,
+      shadow.alpha,
     );
     this.dogShadow.setDepth(DOG_SHADOW_DEPTH);
     this.dogShadow.setOrigin(0.5, 0.5);
@@ -808,12 +815,13 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
+    const shadow = this.petConfig.shadow.game;
     const heightAboveGround = Phaser.Math.Clamp(GROUND_SURFACE - this.dog.y, 0, DOG_SHADOW_MAX_HEIGHT);
     const lift = heightAboveGround / DOG_SHADOW_MAX_HEIGHT;
     const scale = Phaser.Math.Linear(1, DOG_SHADOW_MIN_SCALE, lift);
 
-    this.dogShadow.setPosition(this.dog.x, GROUND_SURFACE + DOG_SHADOW_Y_OFFSET);
-    this.dogShadow.setScale(scale, scale * 0.85);
+    this.dogShadow.setPosition(this.dog.x + shadow.xOffset, GROUND_SURFACE + shadow.yOffset);
+    this.dogShadow.setScale(scale, scale * shadow.scaleYFactor);
     this.dogShadow.setAlpha(Phaser.Math.Linear(0.86, 0.14, lift));
   }
 
@@ -2034,7 +2042,7 @@ export default class GameScene extends Phaser.Scene {
     }
 
     this.releasePauseState();
-    this.scene.start('LoadingScene', { ghostRace: this.ghostRaceEnabled });
+    this.scene.start('LoadingScene', { ghostRace: this.ghostRaceEnabled, pet: this.pet });
   }
 
   goHomeFromPause() {
@@ -2277,6 +2285,8 @@ export default class GameScene extends Phaser.Scene {
   create() {
     this.isGameOver = false;
     this.isPaused = false;
+    this.pet = normalizePet(this.launchPet ?? loadSelectedPet());
+    this.petConfig = getPetConfig(this.pet);
     hidePauseMenu();
     this.anims.resumeAll();
     initPauseMenu({
@@ -2348,7 +2358,7 @@ export default class GameScene extends Phaser.Scene {
     const groundCollider = this.add.rectangle(WIDTH / 2, GROUND_SURFACE + 24, WIDTH, 48, 0x000000, 0);
     this.physics.add.existing(groundCollider, true);
 
-    this.createDogAnimations();
+    this.createPetAnimations();
 
     this.createDogShadow();
 
