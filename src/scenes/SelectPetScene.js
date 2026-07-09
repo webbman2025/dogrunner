@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { getPetConfig, PET_TYPES, saveSelectedPet } from '../petConfig.js';
 import { resetPauseOverlay } from '../pauseMenuDom.js';
+import { createFigmaButton, createTouchableCard } from '../ui/figmaButton.js';
 
 const WIDTH = 480;
 const HEIGHT = 800;
@@ -72,7 +73,6 @@ export default class SelectPetScene extends Phaser.Scene {
 
   createPetCard(x, y, width, height, pet) {
     const config = getPetConfig(pet);
-    const container = this.add.container(x, y).setDepth(20);
     const radius = sy(16);
     const bg = this.add.graphics();
 
@@ -85,6 +85,12 @@ export default class SelectPetScene extends Phaser.Scene {
     };
 
     draw(false);
+
+    const { container, visuals } = createTouchableCard(this, x, y, width, height, {
+      sy,
+      draw,
+      onSelect: () => this.selectPet(pet),
+    });
 
     const previewSize = sx(110);
     const preview = this.add
@@ -100,85 +106,17 @@ export default class SelectPetScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
-    container.add([bg, preview, label]);
-    container.setSize(width, height);
-    container.setInteractive(
-      new Phaser.Geom.Rectangle(-width / 2, -height / 2, width, height),
-      Phaser.Geom.Rectangle.Contains,
-    );
-
-    container.on('pointerdown', () => {
-      this.tweens.add({
-        targets: container,
-        scaleX: 0.97,
-        scaleY: 0.97,
-        duration: 70,
-        yoyo: true,
-        onComplete: () => this.selectPet(pet),
-      });
-    });
-
-    container.on('pointerover', () => draw(true));
-    container.on('pointerout', () => draw(false));
+    visuals.add([bg, preview, label]);
   }
 
   createBackButton() {
-    this.createFigmaButton(WIDTH / 2, sy(680), sx(180), sy(45), {
+    createFigmaButton(this, WIDTH / 2, sy(680), sx(180), sy(50), {
       label: 'Back',
       fill: 0xffffff,
       textColor: '#000000',
       fontSize: `${Math.round(sy(18))}px`,
       onSelect: () => this.scene.start('TitleScene'),
-    });
-  }
-
-  createFigmaButton(x, y, width, height, spec) {
-    const radius = height / 2;
-    const container = this.add.container(x, y).setDepth(20);
-    const bg = this.add.graphics();
-
-    const draw = (alpha = 1) => {
-      bg.clear();
-      bg.fillStyle(spec.fill, alpha);
-      bg.lineStyle(Math.max(2, sy(2)), BORDER_COLOR, 1);
-      bg.fillRoundedRect(-width / 2, -height / 2, width, height, radius);
-      bg.strokeRoundedRect(-width / 2, -height / 2, width, height, radius);
-    };
-
-    draw();
-
-    const text = this.add
-      .text(0, 0, spec.label, {
-        fontFamily: '"Noto Sans", Arial, sans-serif',
-        fontSize: spec.fontSize,
-        fontStyle: 'bold',
-        color: spec.textColor,
-        align: 'center',
-      })
-      .setOrigin(0.5);
-
-    container.add([bg, text]);
-    container.setSize(width, height);
-    container.setInteractive(
-      new Phaser.Geom.Rectangle(-width / 2, -height / 2, width, height),
-      Phaser.Geom.Rectangle.Contains,
-    );
-
-    container.on('pointerdown', () => {
-      this.tweens.add({
-        targets: container,
-        scaleX: 0.97,
-        scaleY: 0.97,
-        duration: 70,
-        yoyo: true,
-        onComplete: spec.onSelect,
-      });
-    });
-
-    container.on('pointerover', () => draw(0.94));
-    container.on('pointerout', () => draw(1));
-
-    return container;
+    }, { sy });
   }
 
   selectPet(pet) {

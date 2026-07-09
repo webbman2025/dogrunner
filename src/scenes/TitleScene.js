@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { resetPauseOverlay } from '../pauseMenuDom.js';
+import { createFigmaButton } from '../ui/figmaButton.js';
 
 const WIDTH = 480;
 const HEIGHT = 800;
@@ -44,7 +45,7 @@ export default class TitleScene extends Phaser.Scene {
 
   createLogo() {
     const logo = this.add.image(WIDTH / 2, 0, 'title-logo');
-    const logoY = sy(LOGO_TOP) + logo.height / 1.6;
+    const logoY = sy(LOGO_TOP) + logo.height / 1.8;
 
     logo
       .setY(logoY)
@@ -65,8 +66,8 @@ export default class TitleScene extends Phaser.Scene {
       },
       {
         label: 'Beat Distance',
-        y: sy(580 + 90),
-        height: sy(45),
+        y: sy(580 + 98),
+        height: sy(50),
         fill: BTN_YELLOW,
         textColor: '#000000',
         fontSize: `${Math.round(sy(18))}px`,
@@ -74,8 +75,8 @@ export default class TitleScene extends Phaser.Scene {
       },
       {
         label: 'How to Play',
-        y: sy(580 + 150),
-        height: sy(45),
+        y: sy(580 + 162),
+        height: sy(50),
         fill: 0xffffff,
         textColor: '#000000',
         fontSize: `${Math.round(sy(18))}px`,
@@ -84,57 +85,8 @@ export default class TitleScene extends Phaser.Scene {
     ];
 
     this.ctaButtons = specs.map((spec) =>
-      this.createFigmaButton(WIDTH / 2, spec.y + spec.height / 2, buttonW, spec.height, spec),
+      createFigmaButton(this, WIDTH / 2, spec.y + spec.height / 2, buttonW, spec.height, spec, { sy }),
     );
-  }
-
-  createFigmaButton(x, y, width, height, spec) {
-    const radius = height / 2;
-    const container = this.add.container(x, y).setDepth(20);
-    const bg = this.add.graphics();
-
-    const draw = (alpha = 1) => {
-      bg.clear();
-      bg.fillStyle(spec.fill, alpha);
-      bg.lineStyle(Math.max(2, sy(2)), BORDER_COLOR, 1);
-      bg.fillRoundedRect(-width / 2, -height / 2, width, height, radius);
-      bg.strokeRoundedRect(-width / 2, -height / 2, width, height, radius);
-    };
-
-    draw();
-
-    const text = this.add
-      .text(0, 0, spec.label, {
-        fontFamily: '"Noto Sans", Arial, sans-serif',
-        fontSize: spec.fontSize,
-        fontStyle: 'bold',
-        color: spec.textColor,
-        align: 'center',
-      })
-      .setOrigin(0.5);
-
-    container.add([bg, text]);
-    container.setSize(width, height);
-    container.setInteractive(
-      new Phaser.Geom.Rectangle(-width / 2, -height / 2, width, height),
-      Phaser.Geom.Rectangle.Contains,
-    );
-
-    container.on('pointerdown', () => {
-      this.tweens.add({
-        targets: container,
-        scaleX: 0.97,
-        scaleY: 0.97,
-        duration: 70,
-        yoyo: true,
-        onComplete: spec.onSelect,
-      });
-    });
-
-    container.on('pointerover', () => draw(0.94));
-    container.on('pointerout', () => draw(1));
-
-    return container;
   }
 
   createHowToPlayOverlay() {
@@ -171,13 +123,13 @@ export default class TitleScene extends Phaser.Scene {
       })
       .setOrigin(0.5, 0);
 
-    const closeBtn = this.createFigmaButton(0, panelH / 2 - sy(42), sx(180), sy(45), {
+    const closeBtn = createFigmaButton(this, 0, panelH / 2 - sy(42), sx(180), sy(50), {
       label: 'Close',
       fill: 0x000000,
       textColor: '#ffffff',
       fontSize: `${Math.round(sy(18))}px`,
       onSelect: () => this.hideHowToPlay(),
-    });
+    }, { sy });
 
     this.howToPlayOverlay.add([dimmer, panelBg, title, body, closeBtn]);
   }
