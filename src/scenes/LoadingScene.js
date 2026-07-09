@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { getPetConfig, loadSelectedPet, normalizePet } from '../petConfig.js';
 import { hidePauseMenu } from '../pauseMenuDom.js';
+import { hideGameOverMenu } from '../gameOverMenuDom.js';
 import { queueGameAssets } from './queueGameAssets.js';
 
 const WIDTH = 480;
@@ -46,6 +47,7 @@ export default class LoadingScene extends Phaser.Scene {
 
   create() {
     hidePauseMenu();
+    hideGameOverMenu();
     this.anims.resumeAll();
     this.tweens.resumeAll();
 

@@ -12,6 +12,11 @@ import {
   initPauseMenu,
   showPauseMenu,
 } from '../pauseMenuDom.js';
+import {
+  hideGameOverMenu,
+  initGameOverMenu,
+  showGameOverMenu,
+} from '../gameOverMenuDom.js';
 import { getPetConfig, loadSelectedPet, normalizePet } from '../petConfig.js';
 
 const WIDTH = 480;
@@ -2050,6 +2055,16 @@ export default class GameScene extends Phaser.Scene {
     this.scene.start('TitleScene');
   }
 
+  retryFromGameOver() {
+    hideGameOverMenu();
+    this.scene.start('LoadingScene', { ghostRace: this.ghostRaceEnabled, pet: this.pet });
+  }
+
+  goHomeFromGameOver() {
+    hideGameOverMenu();
+    this.scene.start('TitleScene');
+  }
+
   createParallaxLayer(key, depth) {
     const scale = HEIGHT / BG_TEXTURE_HEIGHT;
     const layer = this.add.tileSprite(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, key);
@@ -2288,11 +2303,16 @@ export default class GameScene extends Phaser.Scene {
     this.pet = normalizePet(this.launchPet ?? loadSelectedPet());
     this.petConfig = getPetConfig(this.pet);
     hidePauseMenu();
+    hideGameOverMenu();
     this.anims.resumeAll();
     initPauseMenu({
       onResume: () => this.resumeFromPause(),
       onRetry: () => this.retryFromPause(),
       onHome: () => this.goHomeFromPause(),
+    });
+    initGameOverMenu({
+      onRetry: () => this.retryFromGameOver(),
+      onHome: () => this.goHomeFromGameOver(),
     });
     this.createPauseButton();
     this.hearts = MAX_HEARTS;
@@ -2715,15 +2735,6 @@ export default class GameScene extends Phaser.Scene {
     this.finalizeGhostRecording(this.time.now);
     this.ghostDog?.setVisible(false);
 
-    const beatGhost =
-      this.ghostBestAtRunStart &&
-      Math.floor(this.score) > this.ghostBestAtRunStart.finalScore;
-    const gameOverSubtext = beatGhost
-      ? '\nYou beat your ghost!'
-      : this.ghostBestAtRunStart
-        ? `\nGhost: ${this.ghostBestAtRunStart.finalScore}`
-        : '';
-
     this.isGameOver = true;
     this.releasePauseState();
     this.pauseButton?.setVisible(false);
@@ -2734,24 +2745,11 @@ export default class GameScene extends Phaser.Scene {
     this.tweens.killTweensOf(this.dog);
     this.dog.setAlpha(1);
     this.dog.setScale(DOG_SCALE);
+    this.dog.setVisible(false);
     this.dog.play('dead');
     this.placeDogForDeath();
-
-    this.add
-      .text(WIDTH / 2, HEIGHT / 2, `Game Over\nTap to Restart${gameOverSubtext}`, {
-        fontFamily: 'Arial, sans-serif',
-        fontSize: '28px',
-        color: '#ffffff',
-        align: 'center',
-        stroke: '#000000',
-        strokeThickness: 4,
-      })
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setDepth(HEARTS_DEPTH + 1);
-
-    this.input.keyboard.once('keydown-SPACE', () => this.scene.start('TitleScene'));
-    this.input.keyboard.once('keydown-UP', () => this.scene.start('TitleScene'));
+    this.dogShadow?.setVisible(false);
+    showGameOverMenu(this.petConfig);
   }
 
   handleCollision(_dog, rock) {

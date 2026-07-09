@@ -73,7 +73,8 @@
       text-align: center;
     }
 
-    #pause-backdrop {
+    #pause-backdrop,
+    #game-over-backdrop {
       position: fixed;
       top: env(safe-area-inset-top, 0px);
       right: env(safe-area-inset-right, 0px);
@@ -86,17 +87,21 @@
     }
 
     #pause-backdrop[hidden],
-    #pause-menu[hidden] {
+    #pause-menu[hidden],
+    #game-over-backdrop[hidden],
+    #game-over-menu[hidden],
+    #game-over-pet[hidden] {
       display: none !important;
     }
 
-    #pause-menu {
+    #pause-menu,
+    #game-over-menu {
       position: fixed;
       top: env(safe-area-inset-top, 0px);
       right: env(safe-area-inset-right, 0px);
       bottom: env(safe-area-inset-bottom, 0px);
       left: env(safe-area-inset-left, 0px);
-      z-index: 31;
+      z-index: 32;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -104,15 +109,52 @@
       pointer-events: none;
     }
 
-    .pause-panel {
+    #game-over-pet {
+      position: fixed;
+      top: env(safe-area-inset-top, 0px);
+      right: env(safe-area-inset-right, 0px);
+      bottom: env(safe-area-inset-bottom, 0px);
+      left: env(safe-area-inset-left, 0px);
+      z-index: 31;
+      pointer-events: none;
+    }
+
+    #game-over-pet[hidden] {
+      display: none !important;
+    }
+
+    #game-over-pet-img {
+      position: absolute;
+      left: 20.8%;
+      bottom: 5.4%;
+      width: min(34vw, 163px);
+      height: auto;
+      transform: translate(-50%, 0);
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+
+    .pause-panel,
+    .game-over-panel {
       position: relative;
       width: min(80vw, 300px);
-      aspect-ratio: 784 / 918;
       max-height: min(72vh, 918px);
       pointer-events: auto;
     }
 
-    .pause-panel-art {
+    .pause-panel {
+      aspect-ratio: 784 / 918;
+    }
+
+    .game-over-panel {
+      aspect-ratio: 779 / 775;
+      max-height: min(72vh, 775px);
+    }
+
+    .pause-panel-art,
+    .game-over-panel-art {
       display: block;
       width: 100%;
       height: 100%;
@@ -122,7 +164,8 @@
       -webkit-user-drag: none;
     }
 
-    .pause-hit {
+    .pause-hit,
+    .game-over-hit {
       position: absolute;
       margin: 0;
       padding: 0;
@@ -133,7 +176,8 @@
       -webkit-tap-highlight-color: transparent;
     }
 
-    .pause-hit:active {
+    .pause-hit:active,
+    .game-over-hit:active {
       background: rgba(255, 255, 255, 0.08);
     }
 
@@ -157,6 +201,20 @@
       width: 74.49%;
       height: 9.8%;
     }
+
+    .game-over-hit-retry {
+      left: 2%;
+      top: 43.5%;
+      width: 96%;
+      height: 9.5%;
+    }
+
+    .game-over-hit-home {
+      left: 13%;
+      top: 68.5%;
+      width: 74%;
+      height: 9.5%;
+    }
   </style>
 </head>
 <body>
@@ -175,6 +233,24 @@
       <button type="button" class="pause-hit pause-hit-resume" data-pause-action="resume" aria-label="Resume"></button>
       <button type="button" class="pause-hit pause-hit-retry" data-pause-action="retry" aria-label="Try Again"></button>
       <button type="button" class="pause-hit pause-hit-home" data-pause-action="home" aria-label="Back to Home"></button>
+    </div>
+  </div>
+  <div id="game-over-backdrop" hidden></div>
+  <div id="game-over-pet" hidden>
+    <img id="game-over-pet-img" alt="" />
+  </div>
+  <div id="game-over-menu" hidden>
+    <div class="game-over-panel">
+      <img
+        id="game-over-panel-img"
+        class="game-over-panel-art"
+        src="/assets/ui/game-over-panel.png"
+        width="779"
+        height="775"
+        alt="Game over"
+      />
+      <button type="button" class="game-over-hit game-over-hit-retry" data-game-over-action="retry" aria-label="Try Again"></button>
+      <button type="button" class="game-over-hit game-over-hit-home" data-game-over-action="home" aria-label="Back to Home"></button>
     </div>
   </div>
   <div id="load-error"></div>

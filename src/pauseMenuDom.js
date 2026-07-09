@@ -1,3 +1,5 @@
+import { resetGameOverOverlay } from './gameOverMenuDom.js';
+
 let handlers = null;
 let lastAction = '';
 let lastDispatchAt = 0;
@@ -97,4 +99,5 @@ export function isPauseMenuVisible() {
 export function resetPauseOverlay() {
   hidePauseMenu();
   clearPauseMenuHandlers();
+  resetGameOverOverlay();
 }
