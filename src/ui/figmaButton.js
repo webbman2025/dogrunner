@@ -38,31 +38,10 @@ export function createFigmaButton(scene, x, y, width, height, spec, { sy, depth 
 
   container.add([bg, text, hit]);
 
-  let pressed = false;
-
-  const releasePress = () => {
-    pressed = false;
-    container.setScale(1);
-    draw(1);
-  };
-
-  hit.on('pointerover', () => draw(0.94));
-
-  hit.on('pointerout', releasePress);
-
-  hit.on('pointerdown', () => {
-    pressed = true;
-    scene.tweens.killTweensOf(container);
-    container.setScale(0.97);
-  });
-
-  hit.on('pointerup', () => {
-    if (!pressed) {
-      return;
-    }
-
-    releasePress();
-    spec.onSelect();
+  wireButtonHitArea(scene, container, hit, {
+    onPress: () => draw(0.94),
+    onRelease: () => draw(1),
+    onSelect: spec.onSelect,
   });
 
   return container;
@@ -122,4 +101,59 @@ export function createTouchableCard(
   });
 
   return { container, visuals, hitPadY: scaleY(HIT_PAD_Y) };
+}
+
+function wireButtonHitArea(scene, container, hit, { onPress, onRelease, onSelect }) {
+  let pressed = false;
+
+  const releasePress = () => {
+    pressed = false;
+    container.setScale(1);
+    onRelease();
+  };
+
+  hit.on('pointerover', onPress);
+  hit.on('pointerout', releasePress);
+
+  hit.on('pointerdown', () => {
+    pressed = true;
+    scene.tweens.killTweensOf(container);
+    container.setScale(0.97);
+  });
+
+  hit.on('pointerup', () => {
+    if (!pressed) {
+      return;
+    }
+
+    releasePress();
+    onSelect();
+  });
+}
+
+export function imageDisplaySize(scene, key, displayW) {
+  const frame = scene.textures.get(key).get();
+  const height = displayW * (frame.height / frame.width);
+
+  return { width: displayW, height };
+}
+
+export function createImageButton(scene, x, y, displayW, displayH, key, onSelect, { depth = 20 } = {}) {
+  const hitW = displayW + HIT_PAD_X * 2;
+  const hitH = Math.max(displayH + HIT_PAD_Y * 2, MIN_TOUCH_HEIGHT);
+  const container = scene.add.container(x, y).setDepth(depth);
+  const img = scene.add.image(0, 0, key).setDisplaySize(displayW, displayH);
+  const hit = scene.add
+    .zone(0, 0, hitW, hitH)
+    .setInteractive({ useHandCursor: true });
+
+  container.add([img, hit]);
+
+  wireButtonHitArea(scene, container, hit, {
+    onPress: () => {},
+    onRelease: () => {},
+    onSelect,
+  });
+
+  return container;
 }

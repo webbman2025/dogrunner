@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { resetPauseOverlay } from '../pauseMenuDom.js';
-import { createFigmaButton } from '../ui/figmaButton.js';
+import { createFigmaButton, createImageButton, imageDisplaySize } from '../ui/figmaButton.js';
 
 const WIDTH = 480;
 const HEIGHT = 800;
@@ -8,10 +8,9 @@ const FIGMA_W = 375;
 const FIGMA_H = 812;
 
 const LOGO_TOP = 20;
-const BG_Y_OFFSET = 50;
+const BG_Y_OFFSET = 35;
 
 const BORDER_COLOR = 0x6d5a55;
-const BTN_YELLOW = 0xffe500;
 const sx = (value) => (value * WIDTH) / FIGMA_W;
 const sy = (value) => (value * HEIGHT) / FIGMA_H;
 
@@ -23,6 +22,9 @@ export default class TitleScene extends Phaser.Scene {
   preload() {
     this.load.image('title-background', 'assets/ui/title-background.png');
     this.load.image('title-logo', 'assets/ui/title-logo.png');
+    this.load.image('title-cta-start', 'assets/ui/title-cta-start.png');
+    this.load.image('title-cta-beat', 'assets/ui/title-cta-beat.png');
+    this.load.image('title-cta-howto', 'assets/ui/title-cta-howto.png');
   }
 
   create() {
@@ -53,40 +55,51 @@ export default class TitleScene extends Phaser.Scene {
   }
 
   createCtaButtons() {
-    const buttonW = sx(210);
+    // Figma Frame 3 (36:839): top y=596, w=231, 16px gap — height from image aspect ratio (not sy)
+    const buttonW = sx(231) * 0.85;
+    const gap = sy(16);
     const specs = [
       {
-        label: 'Start Game',
-        y: sy(580 + 20),
-        height: sy(55),
-        fill: 0x000000,
-        textColor: '#ffffff',
-        fontSize: `${Math.round(sy(26))}px`,
+        key: 'title-cta-start',
         onSelect: () => this.startGame({ ghost: false }),
       },
       {
-        label: 'Beat Distance',
-        y: sy(580 + 98),
-        height: sy(50),
-        fill: BTN_YELLOW,
-        textColor: '#000000',
-        fontSize: `${Math.round(sy(18))}px`,
+        key: 'title-cta-beat',
         onSelect: () => this.startGame({ ghost: true }),
       },
       {
-        label: 'How to Play',
-        y: sy(580 + 162),
-        height: sy(50),
-        fill: 0xffffff,
-        textColor: '#000000',
-        fontSize: `${Math.round(sy(18))}px`,
+        key: 'title-cta-howto',
         onSelect: () => this.showHowToPlay(),
       },
     ];
 
-    this.ctaButtons = specs.map((spec) =>
-      createFigmaButton(this, WIDTH / 2, spec.y + spec.height / 2, buttonW, spec.height, spec, { sy }),
-    );
+    const layouts = specs.map((spec) => ({
+      ...spec,
+      ...imageDisplaySize(this, spec.key, buttonW),
+    }));
+
+    const totalH = layouts.reduce((sum, layout) => sum + layout.height, 0) + gap * (layouts.length - 1);
+    let topY = sy(580);
+    const maxBottom = HEIGHT - sy(12);
+
+    if (topY + totalH > maxBottom) {
+      topY = maxBottom - totalH;
+    }
+
+    this.ctaButtons = layouts.map((spec) => {
+      const centerY = topY + spec.height / 2;
+      topY += spec.height + gap;
+
+      return createImageButton(
+        this,
+        WIDTH / 2,
+        centerY,
+        spec.width,
+        spec.height,
+        spec.key,
+        spec.onSelect,
+      );
+    });
   }
 
   createHowToPlayOverlay() {
