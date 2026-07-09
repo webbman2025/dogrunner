@@ -6,9 +6,8 @@ const HEIGHT = 800;
 const FIGMA_W = 375;
 const FIGMA_H = 812;
 
-const LOGO_W = 184;
-const LOGO_H = 122;
-const LOGO_TOP = 40;
+const LOGO_TOP = 20;
+const BG_Y_OFFSET = 50;
 
 const BORDER_COLOR = 0x6d5a55;
 const BTN_YELLOW = 0xffe500;
@@ -37,20 +36,18 @@ export default class TitleScene extends Phaser.Scene {
   }
 
   createBackground() {
-    const bg = this.add.image(WIDTH / 2, HEIGHT / 2, 'title-background');
+    const bg = this.add.image(WIDTH / 2, HEIGHT / 2 + sy(BG_Y_OFFSET), 'title-background');
     const scale = Math.max(WIDTH / bg.width, HEIGHT / bg.height);
     bg.setScale(scale);
     bg.setDepth(0);
   }
 
   createLogo() {
-    const logoW = sx(LOGO_W);
-    const logoH = sx(LOGO_H);
-    const logoY = sy(LOGO_TOP) + logoH / 2;
+    const logo = this.add.image(WIDTH / 2, 0, 'title-logo');
+    const logoY = sy(LOGO_TOP) + logo.height / 1.6;
 
-    this.add
-      .image(WIDTH / 2, logoY, 'title-logo')
-      .setDisplaySize(logoW, logoH)
+    logo
+      .setY(logoY)
       .setDepth(10);
   }
 
