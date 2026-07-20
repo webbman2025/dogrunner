@@ -20,6 +20,8 @@ export const PET_CONFIGS = {
     previewPath: 'assets/dog/run_0.png',
     previewKey: 'pet-preview-dog',
     snackPath: 'assets/dog/snacks/biscuit.png',
+    snackNativeSize: { w: 244, h: 132 },
+    snackDisplayHeight: 50,
     shadow: {
       game: {
         xOffset: 0,

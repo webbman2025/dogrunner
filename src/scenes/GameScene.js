@@ -68,9 +68,7 @@ const COLLECTIBLE_COLLECT_VERTICAL_PAD = 32;
 const SNACK_PICKUP_SIZE = 50;
 const SNACK_PICKUP_SPAWN_MIN_SCORE = 300;
 const SNACK_PICKUP_SPAWN_MAX_SCORE = 400;
-const SNACK_PICKUP_SPAWN_X = WIDTH + 280;
-const SNACK_PICKUP_Y_MIN = 300;
-const SNACK_PICKUP_Y_MAX = 370;
+const SNACK_PICKUP_SPAWN_X = HEART_PICKUP_SPAWN_X + 300;
 const PICKUP_MIN_SCORE_SEPARATION = 120;
 const MAX_ACTIVE_SNACK_PICKUPS = 1;
 const INVINCIBLE_MS = 5000;
@@ -176,6 +174,10 @@ const DOG_SHADOW_DEPTH = -1;
 const DOG_SHADOW_MAX_HEIGHT = 420;
 const DOG_SHADOW_MIN_SCALE = 0.22;
 const ROCK_Y_OFFSET = -30;
+const ROCK_KNOCK_GRAVITY = 1400;
+const ROCK_KNOCK_BOUNCE = 0.38;
+const ROCK_KNOCK_FRICTION = 0.96;
+const ROCK_KNOCK_GROUND_Y = GROUND_SURFACE + ROCK_Y_OFFSET;
 const MUD_Y_OFFSET = -15;
 const RAIN_BACK_DEPTH = 3;
 const RAIN_FRONT_DEPTH = 9;
@@ -252,7 +254,7 @@ const GHOST_X_MAX = 160;
 const GHOST_DEPTH = -0.5;
 
 const COURSE_SEED = 0xd064755;
-const COURSE_SCHEDULE_VERSION = 7;
+const COURSE_SCHEDULE_VERSION = 10;
 const COURSE_MAX_MS = 10 * 60 * 1000;
 
 function createSeededRng(seed) {
@@ -380,7 +382,7 @@ function buildCourseSchedule(speedMultiplier) {
       events.push({
         type: 'snack',
         t: state.t,
-        baseY: rng.between(SNACK_PICKUP_Y_MIN, SNACK_PICKUP_Y_MAX),
+        baseY: rng.between(HEART_PICKUP_Y_MIN, HEART_PICKUP_Y_MAX),
       });
       lastSnackScore = snackScoreTarget;
       snackScoreTarget += rng.between(
@@ -484,6 +486,7 @@ export default class GameScene extends Phaser.Scene {
   static devSpeed = 'fast';
   static devGhostRace = 'off';
   static devHKWeather = 'off';
+  static devInvincible = 'off';
 
   constructor() {
     super('GameScene');
@@ -661,11 +664,15 @@ export default class GameScene extends Phaser.Scene {
   }
 
   getMudSlowFactor() {
-    if (this.invincibleMs > 0) {
+    if (this.isInvincibleActive()) {
       return 1;
     }
 
     return this.isInMud ? MUD_SLOW_FACTOR : 1;
+  }
+
+  isInvincibleActive() {
+    return GameScene.devInvincible === 'on' || this.invincibleMs > 0;
   }
 
   loadGhostRaceEnabled() {
@@ -870,7 +877,7 @@ export default class GameScene extends Phaser.Scene {
   }
 
   isRockHittingDog(rock) {
-    if (!rock.active || !this.dog.body || !rock.body) {
+    if (!rock.active || rock.getData('knocked') || !this.dog.body || !rock.body) {
       return false;
     }
 
@@ -912,12 +919,53 @@ export default class GameScene extends Phaser.Scene {
   isHazardTooClose(spawnX, displayWidth, others) {
     const halfWidth = displayWidth / 2;
     return others.getChildren().some((other) => {
-      if (!other.active || other.x <= -other.displayWidth) {
+      if (!other.active || other.getData('knocked') || other.x <= -other.displayWidth) {
         return false;
       }
 
       return this.getHazardClearance(spawnX, halfWidth, other) < HAZARD_MIN_GAP_PX;
     });
+  }
+
+  knockObstacleAway(rock) {
+    if (!rock.active || rock.getData('knocked')) {
+      return;
+    }
+
+    rock.setData('knocked', true);
+    if (rock.body) {
+      rock.body.checkCollision.none = true;
+      rock.body.enable = false;
+    }
+
+    const spinDir = Phaser.Math.Between(0, 1) === 0 ? -1 : 1;
+    rock.setData('knockVx', Phaser.Math.Between(-140, -60));
+    rock.setData('knockVy', Phaser.Math.Between(-440, -300));
+    rock.setData('knockSpin', spinDir * Phaser.Math.Between(360, 620));
+    rock.setDepth(5);
+  }
+
+  updateKnockedObstacle(rock, dt, scrollDelta) {
+    let vx = rock.getData('knockVx') ?? 0;
+    let vy = rock.getData('knockVy') ?? 0;
+    const spin = rock.getData('knockSpin') ?? 0;
+
+    vy += ROCK_KNOCK_GRAVITY * dt;
+    rock.x += -scrollDelta + vx * dt;
+    rock.y += vy * dt;
+    rock.angle += spin * dt;
+    rock.setData('knockVx', vx * ROCK_KNOCK_FRICTION);
+    rock.setData('knockVy', vy);
+
+    if (rock.y >= ROCK_KNOCK_GROUND_Y && vy > 0) {
+      rock.y = ROCK_KNOCK_GROUND_Y;
+      rock.setData('knockVy', vy * -ROCK_KNOCK_BOUNCE);
+      rock.setData('knockSpin', spin * 0.82);
+    }
+
+    if (rock.x < -rock.displayWidth * 1.5 || rock.y > HEIGHT + 80) {
+      rock.destroy();
+    }
   }
 
   getSpawnScrollSpeed() {
@@ -1264,7 +1312,7 @@ export default class GameScene extends Phaser.Scene {
     this.lastGhostSampleTime = this.gameplayElapsed;
     const inMud = this.isDogOnGround() && this.physics.overlap(this.dog, this.mudPatches);
     const inHit = this.hitCooldownMs > 0;
-    let runScale = inMud && this.invincibleMs <= 0 ? MUD_SLOW_FACTOR : 1;
+    let runScale = inMud && !this.isInvincibleActive() ? MUD_SLOW_FACTOR : 1;
     if (inHit) {
       runScale *= GHOST_HIT_RUN_SCALE;
     }
@@ -1864,6 +1912,14 @@ export default class GameScene extends Phaser.Scene {
     this.applyDayMode();
   }
 
+  setDevInvincible(enabled) {
+    GameScene.devInvincible = enabled ? 'on' : 'off';
+    if (!enabled && this.invincibleMs <= 0) {
+      this.clearInvincibleVisual();
+    }
+    this.refreshDevMenu();
+  }
+
   setDayNightCycle(enabled) {
     this.exitHKLiveModeForManualControls();
 
@@ -1902,7 +1958,7 @@ export default class GameScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true });
 
     this.devPanelBg = this.add
-      .rectangle(10, 42, 250, 302, 0x111827, 0.92)
+      .rectangle(10, 42, 250, 342, 0x111827, 0.92)
       .setOrigin(0, 0)
       .setScrollFactor(0)
       .setDepth(DEV_MENU_DEPTH)
@@ -1998,17 +2054,34 @@ export default class GameScene extends Phaser.Scene {
       }),
     };
 
+    this.invincibleLabel = this.add
+      .text(18, 262, 'Invincibility', devLabelStyle)
+      .setScrollFactor(0)
+      .setDepth(DEV_MENU_DEPTH + 1)
+      .setVisible(false);
+
+    this.invincibleButtons = {
+      on: this.createDevOption(18, 278, 'On', optionStyle, () => {
+        this.setDevInvincible(true);
+      }),
+      off: this.createDevOption(88, 278, 'Off', optionStyle, () => {
+        this.setDevInvincible(false);
+      }),
+    };
+
     this.devMenuItems = [
       this.devPanelBg,
       this.hkWeatherLabel,
       this.cycleLabel,
       this.ghostLabel,
+      this.invincibleLabel,
       ...Object.values(this.weatherButtons),
       ...Object.values(this.hkWeatherButtons),
       ...Object.values(this.dayButtons),
       ...Object.values(this.speedButtons),
       ...Object.values(this.cycleButtons),
       ...Object.values(this.ghostButtons),
+      ...Object.values(this.invincibleButtons),
     ];
 
     this.bindDevMenuInput(this.devButton, () => {
@@ -2049,6 +2122,7 @@ export default class GameScene extends Phaser.Scene {
     const cycleOn = GameScene.devDayNightCycle === 'on';
     const ghostOn = this.ghostRaceEnabled;
     const hkWeatherOn = GameScene.devHKWeather === 'on';
+    const invincibleOn = GameScene.devInvincible === 'on';
 
     Object.entries(this.weatherButtons).forEach(([mode, button]) => {
       if (button?.active) {
@@ -2111,6 +2185,13 @@ export default class GameScene extends Phaser.Scene {
         }
 
         const selected = (key === 'on' && ghostOn) || (key === 'off' && !ghostOn);
+        button.setBackgroundColor(selected ? '#2563eb' : '#374151');
+      }
+    });
+
+    Object.entries(this.invincibleButtons ?? {}).forEach(([key, button]) => {
+      if (button?.active) {
+        const selected = (key === 'on' && invincibleOn) || (key === 'off' && !invincibleOn);
         button.setBackgroundColor(selected ? '#2563eb' : '#374151');
       }
     });
@@ -2571,6 +2652,7 @@ export default class GameScene extends Phaser.Scene {
     this.invincibleMs = 0;
     this.invincibleRainbowTimer = 0;
     this.invincibleFlashMs = 0;
+    GameScene.devInvincible = 'off';
     this.speedMultiplier = this.getSpeedMultiplier();
     this.scrollSpeed = BASE_SCROLL_SPEED * this.speedMultiplier;
     this.score = 0;
@@ -2722,8 +2804,11 @@ export default class GameScene extends Phaser.Scene {
 
     if (this.invincibleMs > 0) {
       this.invincibleMs = Math.max(0, this.invincibleMs - cappedDelta);
+    }
+
+    if (this.isInvincibleActive()) {
       this.updateInvincibleVisual(cappedDelta);
-      if (this.invincibleMs === 0) {
+      if (this.invincibleMs === 0 && GameScene.devInvincible !== 'on') {
         this.clearInvincibleVisual();
       }
     }
@@ -2757,6 +2842,11 @@ export default class GameScene extends Phaser.Scene {
     this.updateDayNightCycle(cappedDelta);
 
     this.obstacles.getChildren().forEach((rock) => {
+      if (rock.getData('knocked')) {
+        this.updateKnockedObstacle(rock, dt, scrollDelta);
+        return;
+      }
+
       rock.x -= effectiveScrollSpeed * dt;
       rock.refreshBody();
 
@@ -3036,9 +3126,9 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
-    rock.destroy();
+    this.knockObstacleAway(rock);
 
-    if (this.invincibleMs > 0) {
+    if (this.isInvincibleActive()) {
       return;
     }
 
