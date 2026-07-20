@@ -65,6 +65,11 @@ const COLLECTIBLE_PICKUP_HITBOX = {
 const COLLECTIBLE_COLLECT_DOG_PAD = 18;
 const COLLECTIBLE_COLLECT_PICKUP_PAD = 22;
 const COLLECTIBLE_COLLECT_VERTICAL_PAD = 32;
+const COLLECT_FLY_DURATION = 480;
+const COLLECT_FLY_TARGET_X = WIDTH + 56;
+const COLLECT_FLY_TARGET_Y = -40;
+const COLLECT_FLY_FADE_START = 0.35;
+const COLLECT_FLY_DEPTH = 25;
 const SNACK_PICKUP_SIZE = 50;
 const SNACK_PICKUP_SPAWN_MIN_SCORE = 300;
 const SNACK_PICKUP_SPAWN_MAX_SCORE = 400;
@@ -204,7 +209,36 @@ const HEARTS_BG = 0xf3ddcd;
 const HEARTS_BORDER = 0x6d5a55;
 const HEARTS_BORDER_W = 2;
 const HEARTS_HUD_Y = 45;
-const SCORE_TEXT_Y = 73;
+const SCORE_TEXT_Y = Math.round(73 * 1.1);
+const DISTANCE_HUD_STYLE = {
+  fontFamily: 'Arial, sans-serif',
+  fontSize: '26px',
+  color: '#ffffff',
+  stroke: '#000000',
+  strokeThickness: 4,
+};
+const DISTANCE_MILESTONE_INTERVAL = 1000;
+const DISTANCE_MILESTONE_MS = 720;
+const DISTANCE_MILESTONE_ZOOM = 1.42;
+const DISTANCE_MILESTONE_FLASH_MS = 100;
+
+function formatDistanceValue(meters) {
+  return Math.max(0, Math.floor(meters)).toLocaleString('en-US');
+}
+
+function getRainbowTint(timerMs, flashMs) {
+  if (flashMs > 0) {
+    return 0xffffff;
+  }
+
+  const step = Math.floor(timerMs / INVINCIBLE_RAINBOW_STEP_MS);
+  if (step % 4 === 3) {
+    return 0xffffff;
+  }
+
+  const colorIndex = Math.floor(step / 4) % INVINCIBLE_RAINBOW_COLORS.length;
+  return INVINCIBLE_RAINBOW_COLORS[colorIndex];
+}
 const HIT_COOLDOWN_MS = 1400;
 const BUMP_SHAKE_DURATION = 160;
 const BUMP_SHAKE_INTENSITY = 0.012;
@@ -549,6 +583,140 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
+  createDistanceHud() {
+    this.passedDistanceMilestoneIndex = 0;
+    this.distanceMilestoneMs = 0;
+    this.distanceMilestoneRainbowTimer = 0;
+    this.distanceMilestoneFlashMs = 0;
+
+    this.distanceHud = this.add.container(WIDTH / 2, SCORE_TEXT_Y).setScrollFactor(0).setDepth(10);
+
+    this.distancePrefixText = this.add.text(0, 0, 'Distance: ', DISTANCE_HUD_STYLE).setOrigin(0, 0);
+    this.distanceValueContainer = this.add.container(0, 0);
+    this.distanceValueText = this.add
+      .text(0, 0, '0', DISTANCE_HUD_STYLE)
+      .setOrigin(0.5, 0.5);
+    this.distanceValueContainer.add(this.distanceValueText);
+    this.distanceSuffixText = this.add.text(0, 0, ' m', DISTANCE_HUD_STYLE).setOrigin(0, 0);
+
+    this.distanceHud.add([
+      this.distancePrefixText,
+      this.distanceValueContainer,
+      this.distanceSuffixText,
+    ]);
+
+    this.layoutDistanceHud(0);
+  }
+
+  layoutDistanceHud(meters) {
+    this.distanceValueText.setText(formatDistanceValue(meters));
+
+    const prefixW = this.distancePrefixText.width;
+    const valueW = this.distanceValueText.width;
+    const suffixW = this.distanceSuffixText.width;
+    const totalW = prefixW + valueW + suffixW;
+    const startX = -totalW / 2;
+    const lineHeight = this.distancePrefixText.height;
+
+    this.distancePrefixText.setPosition(startX, 0);
+    this.distanceValueContainer.setPosition(startX + prefixW + valueW / 2, lineHeight / 2);
+    this.distanceSuffixText.setPosition(startX + prefixW + valueW, 0);
+  }
+
+  updateDistanceHud(displayScore) {
+    if (displayScore === this.displayedScore) {
+      return;
+    }
+
+    this.displayedScore = displayScore;
+    this.layoutDistanceHud(displayScore);
+
+    const milestoneIndex = Math.floor(displayScore / DISTANCE_MILESTONE_INTERVAL);
+    if (milestoneIndex > this.passedDistanceMilestoneIndex) {
+      this.passedDistanceMilestoneIndex = milestoneIndex;
+      this.triggerDistanceMilestoneEffect();
+    }
+  }
+
+  triggerDistanceMilestoneEffect() {
+    this.distanceMilestoneMs = DISTANCE_MILESTONE_MS;
+    this.distanceMilestoneRainbowTimer = 0;
+    this.distanceMilestoneFlashMs = DISTANCE_MILESTONE_FLASH_MS;
+
+    this.tweens.killTweensOf(this.distanceValueContainer);
+    this.distanceValueContainer.setScale(1);
+
+    this.tweens.add({
+      targets: this.distanceValueContainer,
+      scale: DISTANCE_MILESTONE_ZOOM,
+      duration: DISTANCE_MILESTONE_MS * 0.42,
+      ease: 'Sine.easeOut',
+      yoyo: true,
+    });
+
+    this.cameras.main.flash(
+      DISTANCE_MILESTONE_FLASH_MS,
+      255,
+      255,
+      255,
+      false,
+      undefined,
+      0.12,
+    );
+  }
+
+  updateDistanceMilestoneVisual(delta) {
+    if (this.distanceMilestoneFlashMs > 0) {
+      this.distanceMilestoneFlashMs = Math.max(0, this.distanceMilestoneFlashMs - delta);
+    }
+
+    this.distanceMilestoneRainbowTimer += delta;
+    this.distanceValueText.setTint(
+      getRainbowTint(this.distanceMilestoneRainbowTimer, this.distanceMilestoneFlashMs),
+    );
+  }
+
+  clearDistanceMilestoneVisual() {
+    this.distanceMilestoneMs = 0;
+    this.distanceMilestoneRainbowTimer = 0;
+    this.distanceMilestoneFlashMs = 0;
+    this.distanceValueText.clearTint();
+    this.tweens.killTweensOf(this.distanceValueContainer);
+    this.distanceValueContainer.setScale(1);
+  }
+
+  playCollectibleFlyToTopRight(pickup) {
+    if (!pickup?.active) {
+      return;
+    }
+
+    const flyIcon = this.add.image(pickup.x, pickup.y, pickup.texture.key, pickup.frame.name);
+    flyIcon.setOrigin(0.5, 0.5);
+    flyIcon.setDisplaySize(pickup.displayWidth, pickup.displayHeight);
+    flyIcon.setDepth(COLLECT_FLY_DEPTH);
+    flyIcon.setScrollFactor(0);
+
+    const fadeDelay = Math.round(COLLECT_FLY_DURATION * COLLECT_FLY_FADE_START);
+    const fadeDuration = COLLECT_FLY_DURATION - fadeDelay;
+
+    this.tweens.add({
+      targets: flyIcon,
+      x: COLLECT_FLY_TARGET_X,
+      y: COLLECT_FLY_TARGET_Y,
+      duration: COLLECT_FLY_DURATION,
+      ease: 'Sine.easeIn',
+    });
+
+    this.tweens.add({
+      targets: flyIcon,
+      alpha: 0,
+      delay: fadeDelay,
+      duration: fadeDuration,
+      ease: 'Sine.easeIn',
+      onComplete: () => flyIcon.destroy(),
+    });
+  }
+
   playHeartCollectFeedback() {
     const index = this.hearts - 1;
     if (index < 0 || index >= this.heartIcons.length) {
@@ -588,6 +756,7 @@ export default class GameScene extends Phaser.Scene {
     }
 
     pickup.setData('collected', true);
+    this.playCollectibleFlyToTopRight(pickup);
     pickup.destroy();
 
     if (this.hearts < MAX_HEARTS) {
@@ -615,6 +784,7 @@ export default class GameScene extends Phaser.Scene {
     }
 
     pickup.setData('collected', true);
+    this.playCollectibleFlyToTopRight(pickup);
     pickup.destroy();
     this.invincibleMs = INVINCIBLE_MS;
     this.invincibleRainbowTimer = 0;
@@ -637,22 +807,10 @@ export default class GameScene extends Phaser.Scene {
   updateInvincibleVisual(delta) {
     if (this.invincibleFlashMs > 0) {
       this.invincibleFlashMs = Math.max(0, this.invincibleFlashMs - delta);
-      this.dog.setTint(0xffffff);
-      this.dog.setAlpha(1);
-      return;
     }
 
     this.invincibleRainbowTimer += delta;
-    const step = Math.floor(this.invincibleRainbowTimer / INVINCIBLE_RAINBOW_STEP_MS);
-
-    // SMW star-style rainbow steps with intermittent white sparkles.
-    if (step % 4 === 3) {
-      this.dog.setTint(0xffffff);
-    } else {
-      const colorIndex = Math.floor(step / 4) % INVINCIBLE_RAINBOW_COLORS.length;
-      this.dog.setTint(INVINCIBLE_RAINBOW_COLORS[colorIndex]);
-    }
-
+    this.dog.setTint(getRainbowTint(this.invincibleRainbowTimer, this.invincibleFlashMs));
     this.dog.setAlpha(1);
   }
 
@@ -2740,17 +2898,7 @@ export default class GameScene extends Phaser.Scene {
     this.snackPickups = this.physics.add.staticGroup();
 
     this.createHeartsHud();
-
-    this.scoreText = this.add
-      .text(WIDTH / 2, SCORE_TEXT_Y, '0', {
-        fontFamily: 'Arial, sans-serif',
-        fontSize: '32px',
-        color: '#ffffff',
-        stroke: '#000000',
-        strokeThickness: 4,
-      })
-      .setOrigin(0.5, 0)
-      .setDepth(10);
+    this.createDistanceHud();
 
     this.bindInputHandlers();
 
@@ -2834,9 +2982,14 @@ export default class GameScene extends Phaser.Scene {
 
     this.score += effectiveScrollSpeed * dt * 0.1;
     const displayScore = Math.floor(this.score);
-    if (displayScore !== this.displayedScore) {
-      this.displayedScore = displayScore;
-      this.scoreText.setText(displayScore.toString());
+    this.updateDistanceHud(displayScore);
+
+    if (this.distanceMilestoneMs > 0) {
+      this.distanceMilestoneMs = Math.max(0, this.distanceMilestoneMs - cappedDelta);
+      this.updateDistanceMilestoneVisual(cappedDelta);
+      if (this.distanceMilestoneMs === 0) {
+        this.clearDistanceMilestoneVisual();
+      }
     }
 
     this.updateDayNightCycle(cappedDelta);
@@ -3113,6 +3266,7 @@ export default class GameScene extends Phaser.Scene {
     this.physics.pause();
     this.tweens.killTweensOf(this.dog);
     this.clearInvincibleVisual();
+    this.clearDistanceMilestoneVisual();
     this.dog.setScale(DOG_SCALE);
     this.dog.setVisible(false);
     this.dog.play('dead');
