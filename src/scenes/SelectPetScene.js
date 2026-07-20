@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { PET_TYPES, saveSelectedPet } from '../petConfig.js';
 import { resetPauseOverlay } from '../pauseMenuDom.js';
 import { createImageButton, imageDisplaySize } from '../ui/figmaButton.js';
+import { queuePetAssets, queueSharedGameAssets, startGameWithLoading } from './queueGameAssets.js';
 
 const WIDTH = 480;
 const HEIGHT = 800;
@@ -35,6 +36,9 @@ export default class SelectPetScene extends Phaser.Scene {
     this.load.image('select-pet-cat', 'assets/ui/select-pet-cat.png');
     this.load.image('select-pet-cat-btn', 'assets/ui/select-pet-cat-btn.png');
     this.load.image('select-pet-home-btn', 'assets/ui/select-pet-home-btn.png');
+    queueSharedGameAssets(this.load, this.textures);
+    queuePetAssets(this.load, this.textures, PET_TYPES.dog, { includeRunFrames: true });
+    queuePetAssets(this.load, this.textures, PET_TYPES.cat, { includeRunFrames: true });
   }
 
   create() {
@@ -99,7 +103,7 @@ export default class SelectPetScene extends Phaser.Scene {
 
   selectPet(pet) {
     saveSelectedPet(pet);
-    this.scene.start('LoadingScene', {
+    startGameWithLoading(this, {
       ghostRace: this.pendingGhostRace,
       pet,
     });
