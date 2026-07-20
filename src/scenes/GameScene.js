@@ -64,12 +64,12 @@ const HEART_PICKUP_HITBOX = {
 const HEART_PICKUP_COLLECT_PAD = 10;
 const DOG_HEART_COLLECT_PAD = 8;
 const SNACK_PICKUP_SIZE = 50;
-const SNACK_PICKUP_SPAWN_MIN_SCORE = 650;
-const SNACK_PICKUP_SPAWN_MAX_SCORE = 850;
-const SNACK_PICKUP_SPAWN_X = WIDTH + 400;
+const SNACK_PICKUP_SPAWN_MIN_SCORE = 300;
+const SNACK_PICKUP_SPAWN_MAX_SCORE = 400;
+const SNACK_PICKUP_SPAWN_X = WIDTH + 280;
 const SNACK_PICKUP_Y_MIN = 300;
 const SNACK_PICKUP_Y_MAX = 370;
-const PICKUP_MIN_SCORE_SEPARATION = 450;
+const PICKUP_MIN_SCORE_SEPARATION = 120;
 const MAX_ACTIVE_SNACK_PICKUPS = 1;
 const INVINCIBLE_MS = 5000;
 const INVINCIBLE_RAINBOW_COLORS = [
@@ -238,7 +238,7 @@ const GHOST_X_MAX = 160;
 const GHOST_DEPTH = -0.5;
 
 const COURSE_SEED = 0xd064755;
-const COURSE_SCHEDULE_VERSION = 6;
+const COURSE_SCHEDULE_VERSION = 7;
 const COURSE_MAX_MS = 10 * 60 * 1000;
 
 function createSeededRng(seed) {
@@ -302,12 +302,11 @@ function bumpPickupScoreTarget(target, oppositeLastScore) {
     return target;
   }
 
-  const gap = target - oppositeLastScore;
-  if (Math.abs(gap) >= PICKUP_MIN_SCORE_SEPARATION) {
+  if (target >= oppositeLastScore + PICKUP_MIN_SCORE_SEPARATION) {
     return target;
   }
 
-  return oppositeLastScore + (gap >= 0 ? PICKUP_MIN_SCORE_SEPARATION : -PICKUP_MIN_SCORE_SEPARATION);
+  return oppositeLastScore + PICKUP_MIN_SCORE_SEPARATION;
 }
 
 function buildCourseSchedule(speedMultiplier) {
@@ -325,9 +324,9 @@ function buildCourseSchedule(speedMultiplier) {
   );
   let lastHeartScore = null;
   let lastSnackScore = null;
-  let snackScoreTarget = bumpPickupScoreTarget(
-    rng.between(SNACK_PICKUP_SPAWN_MIN_SCORE, SNACK_PICKUP_SPAWN_MAX_SCORE),
-    heartScoreTarget,
+  let snackScoreTarget = rng.between(
+    SNACK_PICKUP_SPAWN_MIN_SCORE,
+    SNACK_PICKUP_SPAWN_MAX_SCORE,
   );
   let lastRockVariant = -1;
 
@@ -1014,9 +1013,7 @@ export default class GameScene extends Phaser.Scene {
         event.type === 'snack' &&
         this.getActiveSnackPickupCount() >= MAX_ACTIVE_SNACK_PICKUPS
       ) {
-        this.courseSpawnedIndices.add(i);
-        i++;
-        continue;
+        break;
       }
 
       if (

@@ -75,7 +75,7 @@ Living requirements document for the current Phaser 3 build. Updated to reflect 
 - Invincibility **refreshes to 5 s** if another snack is collected during the buff (no stacking beyond reset).
 - Mud does **not** slow movement during invincibility (mud does not cost hearts today).
 - Snacks do **not** add a second score currency; **distance** remains the only run metric and ghost PB.
-- Same spawn schedule for both pets (shared course simulator); only the texture swaps via `petConfig.js`.
+- Spawn every **300–400 m** on the shared course schedule; hearts use a separate interval with a small minimum gap so they do not stack on the same spot.
 - Asset paths:
   - `public/assets/dog/snacks/biscuit.png`
   - `public/assets/cat/snacks/fish.png`

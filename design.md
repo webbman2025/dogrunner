@@ -134,6 +134,7 @@ Spawn timing uses a deterministic course simulator so ghost replays stay consist
 **Pet snack rules**
 
 - Same spawn logic and pickup size for both pets (**50 × 50** on screen).
+- Spawns every **300–400 m** (score); first snack around **300–400 m** into a run.
 - Only the **image** changes — configured in `petConfig.js`, loaded per selected pet.
 - **On collect:** **5 seconds invincibility** — ignore poop collisions for heart loss (refresh timer to 5 s if collected again while active).
 - **Mud** does not slow the pet while invincible (mud never costs hearts).
