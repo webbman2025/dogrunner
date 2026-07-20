@@ -22,6 +22,8 @@ export function queueGameAssets(
   image('sky', 'assets/front.png');
   image('ground', 'assets/ground.png');
   image('obstacle', 'assets/rock.png');
+  image('obstacle-cone', 'assets/ui/cone.png');
+  image('obstacle-bush', 'assets/ui/bush.png');
   image('mud', 'assets/mud.png');
 
   if (includeRunFrames) {
@@ -37,6 +39,8 @@ export function queueGameAssets(
   for (const i of config.sleepFrames) {
     petImage(`sleep_${i}`, config.assetPaths.sleep(i));
   }
+
+  petImage('pet-snack', config.snackPath);
 
   image('heart-full', 'assets/ui/heart-full.png');
   image('heart-empty', 'assets/ui/heart-empty.png');

@@ -19,6 +19,7 @@ export const PET_CONFIGS = {
     },
     previewPath: 'assets/dog/run_0.png',
     previewKey: 'pet-preview-dog',
+    snackPath: 'assets/dog/snacks/biscuit.png',
     shadow: {
       game: {
         xOffset: 0,
@@ -50,6 +51,7 @@ export const PET_CONFIGS = {
     },
     previewPath: 'assets/cat/cat_run/cat_run_0.png',
     previewKey: 'pet-preview-cat',
+    snackPath: 'assets/cat/snacks/fish.png',
     shadow: {
       game: {
         xOffset: 0,

@@ -63,6 +63,13 @@ const HEART_PICKUP_HITBOX = {
 };
 const HEART_PICKUP_COLLECT_PAD = 10;
 const DOG_HEART_COLLECT_PAD = 8;
+const SNACK_PICKUP_SIZE = 50;
+const SNACK_PICKUP_SPAWN_MIN_SCORE = 450;
+const SNACK_PICKUP_SPAWN_MAX_SCORE = 650;
+const MAX_ACTIVE_SNACK_PICKUPS = 1;
+const INVINCIBLE_MS = 5000;
+const OBSTACLE_TEXTURE_KEYS = ['obstacle', 'obstacle-cone', 'obstacle-bush'];
+const OBSTACLE_VARIANT_COUNT = OBSTACLE_TEXTURE_KEYS.length;
 const COYOTE_MS = 130;
 const GROUND_SNAP_TOLERANCE = 8;
 const MIN_JUMP_VELOCITY = -720;
@@ -187,7 +194,7 @@ const GHOST_X_MAX = 160;
 const GHOST_DEPTH = -0.5;
 
 const COURSE_SEED = 0xd064755;
-const COURSE_SCHEDULE_VERSION = 3;
+const COURSE_SCHEDULE_VERSION = 4;
 const COURSE_MAX_MS = 10 * 60 * 1000;
 
 function createSeededRng(seed) {
@@ -259,6 +266,11 @@ function buildCourseSchedule(speedMultiplier) {
     HEART_PICKUP_SPAWN_MIN_SCORE,
     HEART_PICKUP_SPAWN_MAX_SCORE,
   );
+  let snackScoreTarget = rng.between(
+    SNACK_PICKUP_SPAWN_MIN_SCORE,
+    SNACK_PICKUP_SPAWN_MAX_SCORE,
+  );
+  let lastRockVariant = -1;
 
   while (state.t < COURSE_MAX_MS) {
     const step = Math.max(1, Math.min(rockTimer, mudTimer, 50));
@@ -281,6 +293,18 @@ function buildCourseSchedule(speedMultiplier) {
       );
     }
 
+    while (state.score >= snackScoreTarget) {
+      events.push({
+        type: 'snack',
+        t: state.t,
+        baseY: rng.between(HEART_PICKUP_Y_MIN, HEART_PICKUP_Y_MAX),
+      });
+      snackScoreTarget += rng.between(
+        SNACK_PICKUP_SPAWN_MIN_SCORE,
+        SNACK_PICKUP_SPAWN_MAX_SCORE,
+      );
+    }
+
     if (rockTimer <= 0) {
       const activeMud = pruneSimHazards(muds, state.t, speedMultiplier);
       if (
@@ -294,7 +318,13 @@ function buildCourseSchedule(speedMultiplier) {
       ) {
         rockTimer = HAZARD_RETRY_MS;
       } else {
-        events.push({ type: 'rock', t: state.t });
+        let variant = rng.between(0, OBSTACLE_VARIANT_COUNT - 1);
+        if (variant === lastRockVariant) {
+          variant = (variant + 1) % OBSTACLE_VARIANT_COUNT;
+        }
+        lastRockVariant = variant;
+
+        events.push({ type: 'rock', t: state.t, variant });
         rocks.push({
           spawnT: state.t,
           spawnX: HAZARD_SPAWN_X,
@@ -515,6 +545,93 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
+  isSnackPickupInRange(pickup) {
+    if (!pickup.active || pickup.getData('collected')) {
+      return false;
+    }
+
+    const dogBody = this.dog.body;
+    const snack = pickup.getBounds();
+    const dogPad = DOG_HEART_COLLECT_PAD;
+    const snackPad = HEART_PICKUP_COLLECT_PAD;
+
+    if (dogBody) {
+      const bodyHit =
+        dogBody.left - dogPad < snack.right + snackPad &&
+        dogBody.right + dogPad > snack.left - snackPad &&
+        dogBody.top - dogPad < snack.bottom + snackPad &&
+        dogBody.bottom + dogPad > snack.top - snackPad;
+
+      if (bodyHit) {
+        return true;
+      }
+    }
+
+    const dog = this.dog.getBounds();
+
+    return (
+      dog.left - dogPad < snack.right + snackPad &&
+      dog.right + dogPad > snack.left - snackPad &&
+      dog.top - dogPad < snack.bottom + snackPad &&
+      dog.bottom + dogPad > snack.top - snackPad
+    );
+  }
+
+  checkSnackPickups() {
+    if (this.isGameOver) {
+      return;
+    }
+
+    this.physics.overlap(this.dog, this.snackPickups, (_dog, pickup) => {
+      this.collectSnack(pickup);
+    });
+
+    const pickups = [...this.snackPickups.getChildren()];
+    pickups.forEach((pickup) => {
+      if (this.isSnackPickupInRange(pickup)) {
+        this.collectSnack(pickup);
+      }
+    });
+  }
+
+  collectSnack(pickup) {
+    if (!pickup.active || pickup.getData('collected')) {
+      return;
+    }
+
+    pickup.setData('collected', true);
+    pickup.destroy();
+    this.invincibleMs = INVINCIBLE_MS;
+    this.applyInvincibleVisual(true);
+    this.playSnackCollectFeedback();
+  }
+
+  playSnackCollectFeedback() {
+    this.tweens.killTweensOf(this.dog, 'invinciblePulse');
+    this.tweens.add({
+      targets: this.dog,
+      alpha: 0.72,
+      duration: 120,
+      yoyo: true,
+      repeat: 2,
+      onComplete: () => {
+        if (this.invincibleMs > 0) {
+          this.applyInvincibleVisual(true);
+        }
+      },
+    });
+  }
+
+  applyInvincibleVisual(active) {
+    if (active) {
+      this.dog.setTint(0xfff4a3);
+      return;
+    }
+
+    this.dog.clearTint();
+    this.dog.setAlpha(1);
+  }
+
   loadGhostRaceEnabled() {
     try {
       const value = localStorage.getItem(GHOST_RACE_PREF_KEY);
@@ -729,8 +846,24 @@ export default class GameScene extends Phaser.Scene {
     this.setupHeartPickupPhysics(pickup);
   }
 
+  spawnSnackPickupsFromEvent(event) {
+    const pickup = this.snackPickups.create(
+      HEART_PICKUP_SPAWN_X,
+      event.baseY,
+      'pet-snack',
+    );
+    pickup.setOrigin(0.5, 0.5);
+    pickup.setDisplaySize(SNACK_PICKUP_SIZE, SNACK_PICKUP_SIZE);
+    pickup.setDepth(4);
+    this.setupHeartPickupPhysics(pickup);
+  }
+
   getActiveHeartPickupCount() {
     return this.heartPickups?.countActive(true) ?? 0;
+  }
+
+  getActiveSnackPickupCount() {
+    return this.snackPickups?.countActive(true) ?? 0;
   }
 
   trySpawnCourseEvent(event, elapsed) {
@@ -744,6 +877,11 @@ export default class GameScene extends Phaser.Scene {
 
     if (event.type === 'heart') {
       this.spawnHeartPickupsFromEvent(event);
+      return true;
+    }
+
+    if (event.type === 'snack') {
+      this.spawnSnackPickupsFromEvent(event);
       return true;
     }
 
@@ -765,6 +903,15 @@ export default class GameScene extends Phaser.Scene {
       if (
         event.type === 'heart' &&
         this.getActiveHeartPickupCount() >= MAX_ACTIVE_HEART_PICKUPS
+      ) {
+        this.courseSpawnedIndices.add(i);
+        i++;
+        continue;
+      }
+
+      if (
+        event.type === 'snack' &&
+        this.getActiveSnackPickupCount() >= MAX_ACTIVE_SNACK_PICKUPS
       ) {
         this.courseSpawnedIndices.add(i);
         i++;
@@ -2317,6 +2464,7 @@ export default class GameScene extends Phaser.Scene {
     this.createPauseButton();
     this.hearts = MAX_HEARTS;
     this.hitCooldownMs = 0;
+    this.invincibleMs = 0;
     this.speedMultiplier = this.getSpeedMultiplier();
     this.scrollSpeed = BASE_SCROLL_SPEED * this.speedMultiplier;
     this.score = 0;
@@ -2401,6 +2549,7 @@ export default class GameScene extends Phaser.Scene {
     this.obstacles = this.physics.add.staticGroup();
     this.mudPatches = this.physics.add.staticGroup();
     this.heartPickups = this.physics.add.staticGroup();
+    this.snackPickups = this.physics.add.staticGroup();
 
     this.createHeartsHud();
 
@@ -2465,6 +2614,13 @@ export default class GameScene extends Phaser.Scene {
       this.hitCooldownMs = Math.max(0, this.hitCooldownMs - cappedDelta);
     }
 
+    if (this.invincibleMs > 0) {
+      this.invincibleMs = Math.max(0, this.invincibleMs - cappedDelta);
+      if (this.invincibleMs === 0) {
+        this.applyInvincibleVisual(false);
+      }
+    }
+
     const dt = cappedDelta / 1000;
     const onGround = this.isDogOnGround();
 
@@ -2520,7 +2676,17 @@ export default class GameScene extends Phaser.Scene {
       }
     });
 
+    this.snackPickups.getChildren().forEach((pickup) => {
+      pickup.x -= effectiveScrollSpeed * dt;
+      pickup.refreshBody();
+
+      if (pickup.x < -pickup.displayWidth) {
+        pickup.destroy();
+      }
+    });
+
     this.checkHeartPickups();
+    this.checkSnackPickups();
 
     this.dog.x = DOG_X;
     this.dog.setVelocityX(0);
@@ -2584,7 +2750,13 @@ export default class GameScene extends Phaser.Scene {
       return false;
     }
 
-    const rock = this.obstacles.create(spawnX, GROUND_SURFACE + ROCK_Y_OFFSET, 'obstacle');
+    const textureKey =
+      OBSTACLE_TEXTURE_KEYS[event.variant ?? 0] ?? OBSTACLE_TEXTURE_KEYS[0];
+    const rock = this.obstacles.create(
+      spawnX,
+      GROUND_SURFACE + ROCK_Y_OFFSET,
+      textureKey,
+    );
     rock.setOrigin(0.5, 1);
     rock.setDisplaySize(OBSTACLE_DISPLAY_W, OBSTACLE_DISPLAY_H);
     rock.y = GROUND_SURFACE + ROCK_Y_OFFSET;
@@ -2757,10 +2929,15 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
+    rock.destroy();
+
+    if (this.invincibleMs > 0) {
+      return;
+    }
+
     const snapY = this.dog.y;
     const snapVy = this.dog.body.velocity.y;
 
-    rock.destroy();
     this.hearts -= 1;
     this.updateHeartsHud();
     this.hitCooldownMs = HIT_COOLDOWN_MS;
