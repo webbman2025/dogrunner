@@ -24,7 +24,6 @@ const BAR_H = 35;
 const BAR_PAD = 5;
 const BAR_INNER_H = 25;
 const BAR_RADIUS = 20;
-const MOCK_LOAD_MS = 1000;
 
 export default class LoadingScene extends Phaser.Scene {
   constructor() {
@@ -42,6 +41,14 @@ export default class LoadingScene extends Phaser.Scene {
   }
 
   preload() {
+    this.cameras.main.setBackgroundColor(LOADING_BG);
+    this.createProgressBar();
+    this.createProgressLabel();
+
+    this.load.on('progress', (value) => {
+      this.setProgress(value);
+    });
+
     queueGameAssets(this.load, this.textures, { includeRunFrames: true, pet: this.pet });
   }
 
@@ -50,8 +57,6 @@ export default class LoadingScene extends Phaser.Scene {
     hideGameOverMenu();
     this.anims.resumeAll();
     this.tweens.resumeAll();
-
-    this.cameras.main.setBackgroundColor(LOADING_BG);
 
     if (this.anims.exists('loading-run')) {
       this.anims.remove('loading-run');
@@ -65,8 +70,8 @@ export default class LoadingScene extends Phaser.Scene {
     });
 
     this.createPetPreview();
-    this.createProgressBar();
-    this.beginMockLoad();
+    this.setProgress(1);
+    this.startGame();
   }
 
   createPetPreview() {
@@ -119,45 +124,34 @@ export default class LoadingScene extends Phaser.Scene {
     this.setProgress(0);
   }
 
+  createProgressLabel() {
+    this.progressLabel = this.add
+      .text(WIDTH / 2, sy(BAR_Y) + sx(BAR_H) + sy(12), '0%', {
+        fontFamily: 'Arial, sans-serif',
+        fontSize: `${Math.round(sy(16))}px`,
+        color: '#ffffff',
+        stroke: '#000000',
+        strokeThickness: 3,
+      })
+      .setOrigin(0.5, 0)
+      .setDepth(5);
+  }
+
   setProgress(value) {
     const progress = Phaser.Math.Clamp(value, 0, 1);
     const { innerX, innerY, innerW, innerH } = this.barMetrics;
     const fillW = innerW * progress;
 
     this.barFill.clear();
-    if (fillW <= 0) {
-      return;
+    if (fillW > 0) {
+      this.barFill.fillStyle(BAR_FILL, 1);
+      this.barFill.fillRect(innerX, innerY, fillW, innerH);
     }
 
-    this.barFill.fillStyle(BAR_FILL, 1);
-    this.barFill.fillRect(innerX, innerY, fillW, innerH);
+    this.progressLabel?.setText(`${Math.round(progress * 100)}%`);
   }
 
-  beginMockLoad() {
-    this.mockLoadComplete = false;
-    this.loadProgress = { value: 0 };
-
-    this.tweens.add({
-      targets: this.loadProgress,
-      value: 1,
-      duration: MOCK_LOAD_MS,
-      ease: 'Linear',
-      onUpdate: () => {
-        this.setProgress(this.loadProgress.value);
-      },
-      onComplete: () => {
-        this.setProgress(1);
-        this.mockLoadComplete = true;
-        this.tryStartGame();
-      },
-    });
-  }
-
-  tryStartGame() {
-    if (!this.mockLoadComplete) {
-      return;
-    }
-
+  startGame() {
     this.loadingPet?.anims.stop();
     this.scene.start('GameScene', this.pendingGameData);
   }
