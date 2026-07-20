@@ -48,13 +48,13 @@ const HAZARD_MIN_GAP_PX = 100;
 const HAZARD_RETRY_MS = 450;
 const MAX_FRAME_DELTA_MS = 50;
 const MAX_HAZARD_SPAWNS_PER_FRAME = 1;
-const HEART_PICKUP_SPAWN_MIN_SCORE = 200;
-const HEART_PICKUP_SPAWN_MAX_SCORE = 300;
+const HEART_PICKUP_SPAWN_MIN_SCORE = 250;
+const HEART_PICKUP_SPAWN_MAX_SCORE = 380;
 const MAX_ACTIVE_HEART_PICKUPS = 2;
 const HEART_PICKUP_SPAWN_X = WIDTH + 120;
 const HEART_PICKUP_SIZE = 50;
-const HEART_PICKUP_Y_MIN = 340;
-const HEART_PICKUP_Y_MAX = 460;
+const HEART_PICKUP_Y_MIN = 380;
+const HEART_PICKUP_Y_MAX = 480;
 const HEART_PICKUP_HITBOX = {
   x: 22,
   y: 18,
@@ -64,10 +64,25 @@ const HEART_PICKUP_HITBOX = {
 const HEART_PICKUP_COLLECT_PAD = 10;
 const DOG_HEART_COLLECT_PAD = 8;
 const SNACK_PICKUP_SIZE = 50;
-const SNACK_PICKUP_SPAWN_MIN_SCORE = 450;
-const SNACK_PICKUP_SPAWN_MAX_SCORE = 650;
+const SNACK_PICKUP_SPAWN_MIN_SCORE = 650;
+const SNACK_PICKUP_SPAWN_MAX_SCORE = 850;
+const SNACK_PICKUP_SPAWN_X = WIDTH + 400;
+const SNACK_PICKUP_Y_MIN = 300;
+const SNACK_PICKUP_Y_MAX = 370;
+const PICKUP_MIN_SCORE_SEPARATION = 450;
 const MAX_ACTIVE_SNACK_PICKUPS = 1;
 const INVINCIBLE_MS = 5000;
+const INVINCIBLE_RAINBOW_COLORS = [
+  0xff4040,
+  0xffa040,
+  0xffff40,
+  0x40ff40,
+  0x40ffff,
+  0x4040ff,
+  0xff40ff,
+];
+const INVINCIBLE_RAINBOW_STEP_MS = 48;
+const INVINCIBLE_COLLECT_FLASH_MS = 120;
 const OBSTACLE_TEXTURE_KEYS = ['obstacle', 'obstacle-cone', 'obstacle-bush'];
 const OBSTACLE_VARIANT_COUNT = OBSTACLE_TEXTURE_KEYS.length;
 const OBSTACLE_NATIVE_SIZE = {
@@ -223,7 +238,7 @@ const GHOST_X_MAX = 160;
 const GHOST_DEPTH = -0.5;
 
 const COURSE_SEED = 0xd064755;
-const COURSE_SCHEDULE_VERSION = 5;
+const COURSE_SCHEDULE_VERSION = 6;
 const COURSE_MAX_MS = 10 * 60 * 1000;
 
 function createSeededRng(seed) {
@@ -282,6 +297,19 @@ function pruneSimHazards(hazards, atT, speedMultiplier) {
   return hazards.filter((hazard) => simHazardX(hazard, atT, speedMultiplier) > -200);
 }
 
+function bumpPickupScoreTarget(target, oppositeLastScore) {
+  if (oppositeLastScore === null) {
+    return target;
+  }
+
+  const gap = target - oppositeLastScore;
+  if (Math.abs(gap) >= PICKUP_MIN_SCORE_SEPARATION) {
+    return target;
+  }
+
+  return oppositeLastScore + (gap >= 0 ? PICKUP_MIN_SCORE_SEPARATION : -PICKUP_MIN_SCORE_SEPARATION);
+}
+
 function buildCourseSchedule(speedMultiplier) {
   const rng = createSeededRng(COURSE_SEED);
   const events = [];
@@ -295,9 +323,11 @@ function buildCourseSchedule(speedMultiplier) {
     HEART_PICKUP_SPAWN_MIN_SCORE,
     HEART_PICKUP_SPAWN_MAX_SCORE,
   );
-  let snackScoreTarget = rng.between(
-    SNACK_PICKUP_SPAWN_MIN_SCORE,
-    SNACK_PICKUP_SPAWN_MAX_SCORE,
+  let lastHeartScore = null;
+  let lastSnackScore = null;
+  let snackScoreTarget = bumpPickupScoreTarget(
+    rng.between(SNACK_PICKUP_SPAWN_MIN_SCORE, SNACK_PICKUP_SPAWN_MAX_SCORE),
+    heartScoreTarget,
   );
   let lastRockVariant = -1;
 
@@ -311,11 +341,17 @@ function buildCourseSchedule(speedMultiplier) {
     mudTimer -= step;
 
     while (state.score >= heartScoreTarget) {
+      heartScoreTarget = bumpPickupScoreTarget(heartScoreTarget, lastSnackScore);
+      if (state.score < heartScoreTarget) {
+        break;
+      }
+
       events.push({
         type: 'heart',
         t: state.t,
         baseY: rng.between(HEART_PICKUP_Y_MIN, HEART_PICKUP_Y_MAX),
       });
+      lastHeartScore = heartScoreTarget;
       heartScoreTarget += rng.between(
         HEART_PICKUP_SPAWN_MIN_SCORE,
         HEART_PICKUP_SPAWN_MAX_SCORE,
@@ -323,11 +359,17 @@ function buildCourseSchedule(speedMultiplier) {
     }
 
     while (state.score >= snackScoreTarget) {
+      snackScoreTarget = bumpPickupScoreTarget(snackScoreTarget, lastHeartScore);
+      if (state.score < snackScoreTarget) {
+        break;
+      }
+
       events.push({
         type: 'snack',
         t: state.t,
-        baseY: rng.between(HEART_PICKUP_Y_MIN, HEART_PICKUP_Y_MAX),
+        baseY: rng.between(SNACK_PICKUP_Y_MIN, SNACK_PICKUP_Y_MAX),
       });
+      lastSnackScore = snackScoreTarget;
       snackScoreTarget += rng.between(
         SNACK_PICKUP_SPAWN_MIN_SCORE,
         SNACK_PICKUP_SPAWN_MAX_SCORE,
@@ -633,34 +675,58 @@ export default class GameScene extends Phaser.Scene {
     pickup.setData('collected', true);
     pickup.destroy();
     this.invincibleMs = INVINCIBLE_MS;
-    this.applyInvincibleVisual(true);
+    this.invincibleRainbowTimer = 0;
+    this.invincibleFlashMs = INVINCIBLE_COLLECT_FLASH_MS;
     this.playSnackCollectFeedback();
   }
 
   playSnackCollectFeedback() {
-    this.tweens.killTweensOf(this.dog, 'invinciblePulse');
-    this.tweens.add({
-      targets: this.dog,
-      alpha: 0.72,
-      duration: 120,
-      yoyo: true,
-      repeat: 2,
-      onComplete: () => {
-        if (this.invincibleMs > 0) {
-          this.applyInvincibleVisual(true);
-        }
-      },
-    });
+    this.cameras.main.flash(
+      INVINCIBLE_COLLECT_FLASH_MS,
+      255,
+      255,
+      255,
+      false,
+      undefined,
+      0.22,
+    );
   }
 
-  applyInvincibleVisual(active) {
-    if (active) {
-      this.dog.setTint(0xfff4a3);
+  updateInvincibleVisual(delta) {
+    if (this.invincibleFlashMs > 0) {
+      this.invincibleFlashMs = Math.max(0, this.invincibleFlashMs - delta);
+      this.dog.setTint(0xffffff);
+      this.dog.setAlpha(1);
       return;
     }
 
+    this.invincibleRainbowTimer += delta;
+    const step = Math.floor(this.invincibleRainbowTimer / INVINCIBLE_RAINBOW_STEP_MS);
+
+    // SMW star-style rainbow steps with intermittent white sparkles.
+    if (step % 4 === 3) {
+      this.dog.setTint(0xffffff);
+    } else {
+      const colorIndex = Math.floor(step / 4) % INVINCIBLE_RAINBOW_COLORS.length;
+      this.dog.setTint(INVINCIBLE_RAINBOW_COLORS[colorIndex]);
+    }
+
+    this.dog.setAlpha(1);
+  }
+
+  clearInvincibleVisual() {
+    this.invincibleRainbowTimer = 0;
+    this.invincibleFlashMs = 0;
     this.dog.clearTint();
     this.dog.setAlpha(1);
+  }
+
+  getMudSlowFactor() {
+    if (this.invincibleMs > 0) {
+      return 1;
+    }
+
+    return this.isInMud ? MUD_SLOW_FACTOR : 1;
   }
 
   loadGhostRaceEnabled() {
@@ -850,8 +916,7 @@ export default class GameScene extends Phaser.Scene {
   }
 
   getSpawnScrollSpeed() {
-    const mudSlowFactor = this.isInMud ? MUD_SLOW_FACTOR : 1;
-    return this.scrollSpeed * mudSlowFactor;
+    return this.scrollSpeed * this.getMudSlowFactor();
   }
 
   getHazardSpawnX(eventTime, elapsed) {
@@ -879,7 +944,7 @@ export default class GameScene extends Phaser.Scene {
 
   spawnSnackPickupsFromEvent(event) {
     const pickup = this.snackPickups.create(
-      HEART_PICKUP_SPAWN_X,
+      SNACK_PICKUP_SPAWN_X,
       event.baseY,
       'pet-snack',
     );
@@ -1196,7 +1261,7 @@ export default class GameScene extends Phaser.Scene {
     this.lastGhostSampleTime = this.gameplayElapsed;
     const inMud = this.isDogOnGround() && this.physics.overlap(this.dog, this.mudPatches);
     const inHit = this.hitCooldownMs > 0;
-    let runScale = inMud ? MUD_SLOW_FACTOR : 1;
+    let runScale = inMud && this.invincibleMs <= 0 ? MUD_SLOW_FACTOR : 1;
     if (inHit) {
       runScale *= GHOST_HIT_RUN_SCALE;
     }
@@ -2501,6 +2566,8 @@ export default class GameScene extends Phaser.Scene {
     this.hearts = MAX_HEARTS;
     this.hitCooldownMs = 0;
     this.invincibleMs = 0;
+    this.invincibleRainbowTimer = 0;
+    this.invincibleFlashMs = 0;
     this.speedMultiplier = this.getSpeedMultiplier();
     this.scrollSpeed = BASE_SCROLL_SPEED * this.speedMultiplier;
     this.score = 0;
@@ -2652,8 +2719,9 @@ export default class GameScene extends Phaser.Scene {
 
     if (this.invincibleMs > 0) {
       this.invincibleMs = Math.max(0, this.invincibleMs - cappedDelta);
+      this.updateInvincibleVisual(cappedDelta);
       if (this.invincibleMs === 0) {
-        this.applyInvincibleVisual(false);
+        this.clearInvincibleVisual();
       }
     }
 
@@ -2665,7 +2733,7 @@ export default class GameScene extends Phaser.Scene {
     this.scrollSpeed = Math.min(baseSpeed + this.score * 0.05 * this.speedMultiplier, maxSpeed);
 
     this.isInMud = onGround && this.physics.overlap(this.dog, this.mudPatches);
-    const mudSlowFactor = this.isInMud ? MUD_SLOW_FACTOR : 1;
+    const mudSlowFactor = this.getMudSlowFactor();
     const effectiveScrollSpeed = this.scrollSpeed * mudSlowFactor;
     this.dog.anims.timeScale = mudSlowFactor;
 
@@ -2952,7 +3020,7 @@ export default class GameScene extends Phaser.Scene {
     this.dog.anims.timeScale = 1;
     this.physics.pause();
     this.tweens.killTweensOf(this.dog);
-    this.dog.setAlpha(1);
+    this.clearInvincibleVisual();
     this.dog.setScale(DOG_SCALE);
     this.dog.setVisible(false);
     this.dog.play('dead');

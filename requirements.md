@@ -73,7 +73,7 @@ Living requirements document for the current Phaser 3 build. Updated to reflect 
 - **Dog** collects **biscuits**; **cat** collects **fish** — different sprites, **same gameplay**.
 - **Effect:** **5 seconds invincibility** — poop obstacles do not remove hearts while active.
 - Invincibility **refreshes to 5 s** if another snack is collected during the buff (no stacking beyond reset).
-- Mud still slows movement during invincibility (mud does not cost hearts today).
+- Mud does **not** slow movement during invincibility (mud does not cost hearts today).
 - Snacks do **not** add a second score currency; **distance** remains the only run metric and ghost PB.
 - Same spawn schedule for both pets (shared course simulator); only the texture swaps via `petConfig.js`.
 - Asset paths:

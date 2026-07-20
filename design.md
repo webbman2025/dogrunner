@@ -136,9 +136,9 @@ Spawn timing uses a deterministic course simulator so ghost replays stay consist
 - Same spawn logic and pickup size for both pets (**50 × 50** on screen).
 - Only the **image** changes — configured in `petConfig.js`, loaded per selected pet.
 - **On collect:** **5 seconds invincibility** — ignore poop collisions for heart loss (refresh timer to 5 s if collected again while active).
-- **Mud** still applies slow while invincible (mud never costs hearts).
+- **Mud** does not slow the pet while invincible (mud never costs hearts).
 - **Distance** stays the main drive; snacks are a survival power-up, not a second score.
-- **Player feedback:** brief collect pulse + warm tint on pet while invincible.
+- **Player feedback:** SMW star-style rainbow tint on the pet + brief white flash on collect.
 - Ghost / Beat Distance: shared spawn schedule; ghost replay does not need snack/invinc state in v1.
 
 **Asset paths**
