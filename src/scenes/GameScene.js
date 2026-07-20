@@ -55,14 +55,16 @@ const HEART_PICKUP_SPAWN_X = WIDTH + 120;
 const HEART_PICKUP_SIZE = 50;
 const HEART_PICKUP_Y_MIN = 380;
 const HEART_PICKUP_Y_MAX = 480;
-const HEART_PICKUP_HITBOX = {
-  x: 22,
-  y: 18,
-  w: 52,
-  h: 46,
+const COLLECTIBLE_PICKUP_HITBOX = {
+  x: 10,
+  y: 6,
+  w: 76,
+  h: 68,
 };
-const HEART_PICKUP_COLLECT_PAD = 10;
-const DOG_HEART_COLLECT_PAD = 8;
+
+const COLLECTIBLE_COLLECT_DOG_PAD = 18;
+const COLLECTIBLE_COLLECT_PICKUP_PAD = 22;
+const COLLECTIBLE_COLLECT_VERTICAL_PAD = 32;
 const SNACK_PICKUP_SIZE = 50;
 const SNACK_PICKUP_SPAWN_MIN_SCORE = 300;
 const SNACK_PICKUP_SPAWN_MAX_SCORE = 400;
@@ -131,11 +133,17 @@ const BG_TEXTURE_HEIGHT = 1024;
 const PARALLAX_SKY = 0.3;
 const PARALLAX_GROUND = 1;
 const DOG_SCALE = 0.62;
-const DOG_HITBOX = {
+const DOG_HITBOX_RUN = {
   x: 74,
   y: 200,
   w: 110,
   h: 52,
+};
+const DOG_HITBOX_AIR = {
+  x: 80,
+  y: 108,
+  w: 100,
+  h: 92,
 };
 const DOG_HITBOX_INSET = {
   left: 6,
@@ -143,9 +151,15 @@ const DOG_HITBOX_INSET = {
   top: 0,
   bottom: 0,
 };
+const DOG_HITBOX_AIR_INSET = {
+  left: 4,
+  right: 10,
+  top: 4,
+  bottom: 8,
+};
 const DOG_FRAME_H = 263;
 const SLEEP_Y_OFFSET = 10;
-const DOG_HITBOX_BOTTOM = DOG_HITBOX.y + DOG_HITBOX.h;
+const DOG_HITBOX_BOTTOM = DOG_HITBOX_RUN.y + DOG_HITBOX_RUN.h;
 const DOG_RUN_GROUND_Y =
   GROUND_SURFACE + DOG_Y_OFFSET + (DOG_FRAME_H - DOG_HITBOX_BOTTOM) * DOG_SCALE;
 const DOG_SLEEP_Y = DOG_RUN_GROUND_Y + SLEEP_Y_OFFSET;
@@ -553,53 +567,16 @@ export default class GameScene extends Phaser.Scene {
     });
   }
 
-  isHeartPickupInRange(pickup) {
-    if (!pickup.active) {
-      return false;
-    }
-
-    const dogBody = this.dog.body;
-    const heart = pickup.getBounds();
-    const dogPad = DOG_HEART_COLLECT_PAD;
-    const heartPad = HEART_PICKUP_COLLECT_PAD;
-
-    if (dogBody) {
-      const bodyHit =
-        dogBody.left - dogPad < heart.right + heartPad &&
-        dogBody.right + dogPad > heart.left - heartPad &&
-        dogBody.top - dogPad < heart.bottom + heartPad &&
-        dogBody.bottom + dogPad > heart.top - heartPad;
-
-      if (bodyHit) {
-        return true;
-      }
-    }
-
-    const dog = this.dog.getBounds();
-
-    return (
-      dog.left - dogPad < heart.right + heartPad &&
-      dog.right + dogPad > heart.left - heartPad &&
-      dog.top - dogPad < heart.bottom + heartPad &&
-      dog.bottom + dogPad > heart.top - heartPad
-    );
-  }
-
   checkHeartPickups() {
     if (this.isGameOver) {
       return;
     }
 
-    this.physics.overlap(this.dog, this.heartPickups, (_dog, pickup) => {
-      this.collectHeart(pickup);
-    });
-
-    const pickups = [...this.heartPickups.getChildren()];
-    pickups.forEach((pickup) => {
-      if (this.isHeartPickupInRange(pickup)) {
+    for (const pickup of this.heartPickups.getChildren()) {
+      if (this.isCollectiblePickupInRange(pickup)) {
         this.collectHeart(pickup);
       }
-    });
+    }
   }
 
   collectHeart(pickup) {
@@ -617,53 +594,16 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  isSnackPickupInRange(pickup) {
-    if (!pickup.active || pickup.getData('collected')) {
-      return false;
-    }
-
-    const dogBody = this.dog.body;
-    const snack = pickup.getBounds();
-    const dogPad = DOG_HEART_COLLECT_PAD;
-    const snackPad = HEART_PICKUP_COLLECT_PAD;
-
-    if (dogBody) {
-      const bodyHit =
-        dogBody.left - dogPad < snack.right + snackPad &&
-        dogBody.right + dogPad > snack.left - snackPad &&
-        dogBody.top - dogPad < snack.bottom + snackPad &&
-        dogBody.bottom + dogPad > snack.top - snackPad;
-
-      if (bodyHit) {
-        return true;
-      }
-    }
-
-    const dog = this.dog.getBounds();
-
-    return (
-      dog.left - dogPad < snack.right + snackPad &&
-      dog.right + dogPad > snack.left - snackPad &&
-      dog.top - dogPad < snack.bottom + snackPad &&
-      dog.bottom + dogPad > snack.top - snackPad
-    );
-  }
-
   checkSnackPickups() {
     if (this.isGameOver) {
       return;
     }
 
-    this.physics.overlap(this.dog, this.snackPickups, (_dog, pickup) => {
-      this.collectSnack(pickup);
-    });
-
-    const pickups = [...this.snackPickups.getChildren()];
-    pickups.forEach((pickup) => {
-      if (this.isSnackPickupInRange(pickup)) {
+    for (const pickup of this.snackPickups.getChildren()) {
+      if (this.isCollectiblePickupInRange(pickup)) {
         this.collectSnack(pickup);
       }
-    });
+    }
   }
 
   collectSnack(pickup) {
@@ -831,15 +771,81 @@ export default class GameScene extends Phaser.Scene {
   }
 
   setupDogPhysics() {
+    const inset = DOG_HITBOX_INSET;
     this.dog.body.setSize(
-      DOG_HITBOX.w - DOG_HITBOX_INSET.left - DOG_HITBOX_INSET.right,
-      DOG_HITBOX.h - DOG_HITBOX_INSET.top - DOG_HITBOX_INSET.bottom,
+      DOG_HITBOX_RUN.w - inset.left - inset.right,
+      DOG_HITBOX_RUN.h - inset.top - inset.bottom,
     );
     this.dog.body.setOffset(
-      DOG_HITBOX.x + DOG_HITBOX_INSET.left,
-      DOG_HITBOX.y + DOG_HITBOX_INSET.top,
+      DOG_HITBOX_RUN.x + inset.left,
+      DOG_HITBOX_RUN.y + inset.top,
     );
     this.dog.refreshBody();
+  }
+
+  getDogHitboxRect(airborne) {
+    const box = airborne ? DOG_HITBOX_AIR : DOG_HITBOX_RUN;
+    const inset = airborne ? DOG_HITBOX_AIR_INSET : DOG_HITBOX_INSET;
+    const hitbox = {
+      x: box.x + inset.left,
+      y: box.y + inset.top,
+      w: box.w - inset.left - inset.right,
+      h: box.h - inset.top - inset.bottom,
+    };
+    const scale = this.dog.scaleX;
+    const spriteLeft = this.dog.x - this.dog.displayWidth / 2;
+    const spriteTop = this.dog.y - this.dog.displayHeight;
+
+    return {
+      left: spriteLeft + hitbox.x * scale,
+      right: spriteLeft + (hitbox.x + hitbox.w) * scale,
+      top: spriteTop + hitbox.y * scale,
+      bottom: spriteTop + (hitbox.y + hitbox.h) * scale,
+    };
+  }
+
+  getDogCollectibleRect() {
+    const run = this.getDogHitboxRect(false);
+    const air = this.getDogHitboxRect(true);
+
+    return {
+      left: Math.min(run.left, air.left) - COLLECTIBLE_COLLECT_DOG_PAD,
+      right: Math.max(run.right, air.right) + COLLECTIBLE_COLLECT_DOG_PAD,
+      top: Math.min(run.top, air.top) - COLLECTIBLE_COLLECT_VERTICAL_PAD,
+      bottom: Math.max(run.bottom, air.bottom) + COLLECTIBLE_COLLECT_VERTICAL_PAD,
+    };
+  }
+
+  isCollectiblePickupInRange(pickup) {
+    if (!pickup.active || pickup.getData('collected')) {
+      return false;
+    }
+
+    const dogRect = this.getDogCollectibleRect();
+    const bounds = pickup.getBounds();
+    const pad = COLLECTIBLE_COLLECT_PICKUP_PAD;
+
+    return (
+      dogRect.left < bounds.right + pad &&
+      dogRect.right > bounds.left - pad &&
+      dogRect.top < bounds.bottom + pad &&
+      dogRect.bottom > bounds.top - pad
+    );
+  }
+
+  isDogAirborneForHazards() {
+    if (!this.dog?.body) {
+      return false;
+    }
+
+    if (this.dog.body.blocked.down || this.dog.body.touching.down) {
+      return false;
+    }
+
+    return (
+      this.dog.body.velocity.y < -20 ||
+      this.dog.y < DOG_RUN_GROUND_Y - GROUND_SNAP_TOLERANCE
+    );
   }
 
   setupRockPhysics(rock) {
@@ -868,14 +874,14 @@ export default class GameScene extends Phaser.Scene {
       return false;
     }
 
-    const dog = this.dog.body;
+    const dogRect = this.getDogHitboxRect(this.isDogAirborneForHazards());
     const rockBody = rock.body;
 
     return (
-      dog.left < rockBody.right &&
-      dog.right > rockBody.left &&
-      dog.top < rockBody.bottom &&
-      dog.bottom > rockBody.top
+      dogRect.left < rockBody.right &&
+      dogRect.right > rockBody.left &&
+      dogRect.top < rockBody.bottom &&
+      dogRect.bottom > rockBody.top
     );
   }
 
@@ -923,9 +929,9 @@ export default class GameScene extends Phaser.Scene {
     return HAZARD_SPAWN_X - this.getSpawnScrollSpeed() * (lateMs / 1000);
   }
 
-  setupHeartPickupPhysics(pickup) {
-    pickup.body.setSize(HEART_PICKUP_HITBOX.w, HEART_PICKUP_HITBOX.h);
-    pickup.body.setOffset(HEART_PICKUP_HITBOX.x, HEART_PICKUP_HITBOX.y);
+  setupCollectiblePickupPhysics(pickup) {
+    pickup.body.setSize(COLLECTIBLE_PICKUP_HITBOX.w, COLLECTIBLE_PICKUP_HITBOX.h);
+    pickup.body.setOffset(COLLECTIBLE_PICKUP_HITBOX.x, COLLECTIBLE_PICKUP_HITBOX.y);
     pickup.refreshBody();
   }
 
@@ -938,7 +944,7 @@ export default class GameScene extends Phaser.Scene {
     pickup.setOrigin(0.5, 0.5);
     pickup.setDisplaySize(HEART_PICKUP_SIZE, HEART_PICKUP_SIZE);
     pickup.setDepth(4);
-    this.setupHeartPickupPhysics(pickup);
+    this.setupCollectiblePickupPhysics(pickup);
   }
 
   spawnSnackPickupsFromEvent(event) {
@@ -955,7 +961,7 @@ export default class GameScene extends Phaser.Scene {
       : targetH;
     pickup.setDisplaySize(displayW, targetH);
     pickup.setDepth(4);
-    this.setupHeartPickupPhysics(pickup);
+    this.setupCollectiblePickupPhysics(pickup);
   }
 
   getActiveHeartPickupCount() {
@@ -2916,7 +2922,6 @@ export default class GameScene extends Phaser.Scene {
     this.groundJumpActive = true;
     this.dog.setVelocityY(FALL_JUMP_VELOCITY);
     this.dog.setGravityY(GRAVITY_RISE);
-    this.dog.refreshBody();
     return true;
   }
 
