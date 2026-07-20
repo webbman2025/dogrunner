@@ -52,6 +52,8 @@ export const PET_CONFIGS = {
     previewPath: 'assets/cat/cat_run/cat_run_0.png',
     previewKey: 'pet-preview-cat',
     snackPath: 'assets/cat/snacks/fish.png',
+    snackNativeSize: { w: 274, h: 176 },
+    snackDisplayHeight: 68,
     shadow: {
       game: {
         xOffset: 0,

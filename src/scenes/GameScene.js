@@ -70,6 +70,35 @@ const MAX_ACTIVE_SNACK_PICKUPS = 1;
 const INVINCIBLE_MS = 5000;
 const OBSTACLE_TEXTURE_KEYS = ['obstacle', 'obstacle-cone', 'obstacle-bush'];
 const OBSTACLE_VARIANT_COUNT = OBSTACLE_TEXTURE_KEYS.length;
+const OBSTACLE_NATIVE_SIZE = {
+  obstacle: { w: 126, h: 120 },
+  'obstacle-cone': { w: 260, h: 212 },
+  'obstacle-bush': { w: 418, h: 268 },
+};
+const OBSTACLE_TARGET_HEIGHT = {
+  obstacle: OBSTACLE_DISPLAY_H,
+  'obstacle-cone': 58,
+  'obstacle-bush': 64,
+};
+
+function displaySizeFromNative(nativeW, nativeH, targetH) {
+  return {
+    w: Math.round((nativeW / nativeH) * targetH),
+    h: targetH,
+  };
+}
+
+function getObstacleDisplaySize(textureKey) {
+  const native = OBSTACLE_NATIVE_SIZE[textureKey] ?? OBSTACLE_NATIVE_SIZE.obstacle;
+  const targetH = OBSTACLE_TARGET_HEIGHT[textureKey] ?? OBSTACLE_TARGET_HEIGHT.obstacle;
+  return displaySizeFromNative(native.w, native.h, targetH);
+}
+
+function getObstacleDisplaySizeForVariant(variantIndex) {
+  const textureKey =
+    OBSTACLE_TEXTURE_KEYS[variantIndex ?? 0] ?? OBSTACLE_TEXTURE_KEYS[0];
+  return getObstacleDisplaySize(textureKey);
+}
 const COYOTE_MS = 130;
 const GROUND_SNAP_TOLERANCE = 8;
 const MIN_JUMP_VELOCITY = -720;
@@ -194,7 +223,7 @@ const GHOST_X_MAX = 160;
 const GHOST_DEPTH = -0.5;
 
 const COURSE_SEED = 0xd064755;
-const COURSE_SCHEDULE_VERSION = 4;
+const COURSE_SCHEDULE_VERSION = 5;
 const COURSE_MAX_MS = 10 * 60 * 1000;
 
 function createSeededRng(seed) {
@@ -307,10 +336,16 @@ function buildCourseSchedule(speedMultiplier) {
 
     if (rockTimer <= 0) {
       const activeMud = pruneSimHazards(muds, state.t, speedMultiplier);
+      let variant = rng.between(0, OBSTACLE_VARIANT_COUNT - 1);
+      if (variant === lastRockVariant) {
+        variant = (variant + 1) % OBSTACLE_VARIANT_COUNT;
+      }
+      const rockDisplay = getObstacleDisplaySizeForVariant(variant);
+
       if (
         isSimHazardTooClose(
           HAZARD_SPAWN_X,
-          OBSTACLE_DISPLAY_W / 2,
+          rockDisplay.w / 2,
           activeMud,
           state.t,
           speedMultiplier,
@@ -318,17 +353,13 @@ function buildCourseSchedule(speedMultiplier) {
       ) {
         rockTimer = HAZARD_RETRY_MS;
       } else {
-        let variant = rng.between(0, OBSTACLE_VARIANT_COUNT - 1);
-        if (variant === lastRockVariant) {
-          variant = (variant + 1) % OBSTACLE_VARIANT_COUNT;
-        }
         lastRockVariant = variant;
 
         events.push({ type: 'rock', t: state.t, variant });
         rocks.push({
           spawnT: state.t,
           spawnX: HAZARD_SPAWN_X,
-          halfWidth: OBSTACLE_DISPLAY_W / 2,
+          halfWidth: rockDisplay.w / 2,
           scoreAtSpawn: state.score,
         });
         const minGap = Phaser.Math.Clamp(
@@ -853,7 +884,12 @@ export default class GameScene extends Phaser.Scene {
       'pet-snack',
     );
     pickup.setOrigin(0.5, 0.5);
-    pickup.setDisplaySize(SNACK_PICKUP_SIZE, SNACK_PICKUP_SIZE);
+    const targetH = this.petConfig.snackDisplayHeight ?? SNACK_PICKUP_SIZE;
+    const native = this.petConfig.snackNativeSize;
+    const displayW = native
+      ? Math.round((native.w / native.h) * targetH)
+      : targetH;
+    pickup.setDisplaySize(displayW, targetH);
     pickup.setDepth(4);
     this.setupHeartPickupPhysics(pickup);
   }
@@ -2738,27 +2774,28 @@ export default class GameScene extends Phaser.Scene {
   }
 
   spawnRockAt(event, elapsed) {
+    const textureKey =
+      OBSTACLE_TEXTURE_KEYS[event.variant ?? 0] ?? OBSTACLE_TEXTURE_KEYS[0];
+    const display = getObstacleDisplaySize(textureKey);
     const spawnX = this.getHazardSpawnX(event.t, elapsed);
-    if (spawnX < -OBSTACLE_DISPLAY_W) {
+    if (spawnX < -display.w) {
       return true;
     }
 
     if (
-      this.isHazardTooClose(spawnX, OBSTACLE_DISPLAY_W, this.obstacles) ||
-      this.isHazardTooClose(spawnX, OBSTACLE_DISPLAY_W, this.mudPatches)
+      this.isHazardTooClose(spawnX, display.w, this.obstacles) ||
+      this.isHazardTooClose(spawnX, display.w, this.mudPatches)
     ) {
       return false;
     }
 
-    const textureKey =
-      OBSTACLE_TEXTURE_KEYS[event.variant ?? 0] ?? OBSTACLE_TEXTURE_KEYS[0];
     const rock = this.obstacles.create(
       spawnX,
       GROUND_SURFACE + ROCK_Y_OFFSET,
       textureKey,
     );
     rock.setOrigin(0.5, 1);
-    rock.setDisplaySize(OBSTACLE_DISPLAY_W, OBSTACLE_DISPLAY_H);
+    rock.setDisplaySize(display.w, display.h);
     rock.y = GROUND_SURFACE + ROCK_Y_OFFSET;
     this.setupRockPhysics(rock);
     return true;
