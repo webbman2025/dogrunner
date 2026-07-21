@@ -1964,17 +1964,23 @@ export default class GameScene extends Phaser.Scene {
     }
 
     this.passedWeatherMilestoneIndex = milestoneIndex;
-    const previousMode = milestoneIndex === 0 ? null : GameScene.devWeather;
-    this.applyRandomWeatherChange(this.pickRandomWeatherMode(previousMode));
+    this.applyRandomWeatherChange(this.pickRandomWeatherMode(GameScene.devWeather));
   }
 
   initRandomWeatherForRun() {
-    this.passedWeatherMilestoneIndex = -1;
+    this.passedWeatherMilestoneIndex = 0;
     this.weatherRng = createSeededRng(COURSE_SEED ^ 0x9e3779b9);
     this.weatherManualOverride = false;
     this.liveSkyColor = '#87ceeb';
     this.liveWeatherLabel = null;
     this.windIntensity = 0;
+    GameScene.devWeather = WEATHER_MODES.DRY;
+  }
+
+  resetOpeningAtmosphere() {
+    this.initRandomWeatherForRun();
+    this.dayOverlayBlend = 0;
+    GameScene.devDay = DAY_MODES.DAY;
   }
 
   setWeatherMode(mode, { manual = true } = {}) {
@@ -2951,8 +2957,7 @@ export default class GameScene extends Phaser.Scene {
     this.coyoteMs = 0;
     this.wasAirborne = false;
     this.jumpPhase = null;
-    this.initRandomWeatherForRun();
-    GameScene.devWeather = WEATHER_MODES.DRY;
+    this.resetOpeningAtmosphere();
 
     if (typeof this.launchGhostRace === 'boolean') {
       this.ghostRaceEnabled = this.launchGhostRace;
@@ -2987,8 +2992,6 @@ export default class GameScene extends Phaser.Scene {
       this.weatherManualOverride = false;
       this.applyClockDayMode();
       this.fetchAndApplyHKWeather();
-    } else {
-      this.updateRandomWeather(0);
     }
 
     this.physics.world.setBounds(0, 0, WIDTH, HEIGHT);
