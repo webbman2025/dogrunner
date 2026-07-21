@@ -2,11 +2,7 @@ import Phaser from 'phaser';
 import { getPetConfig, loadSelectedPet, normalizePet } from '../petConfig.js';
 import { hidePauseMenu } from '../pauseMenuDom.js';
 import { hideGameOverMenu } from '../gameOverMenuDom.js';
-import {
-  areSharedGameAssetsReady,
-  queuePetAssets,
-  queueSharedGameAssets,
-} from './queueGameAssets.js';
+import { queueGameAssets } from './queueGameAssets.js';
 
 const WIDTH = 480;
 const HEIGHT = 800;
@@ -14,7 +10,6 @@ const FIGMA_W = 375;
 const FIGMA_H = 812;
 const LOADING_BG = 0x53a4fd;
 const BAR_FILL = 0xff0000;
-const READY_HOLD_MS = 120;
 
 const sx = (value) => (value * WIDTH) / FIGMA_W;
 const sy = (value) => (value * HEIGHT) / FIGMA_H;
@@ -50,16 +45,11 @@ export default class LoadingScene extends Phaser.Scene {
     this.createProgressBar();
     this.createProgressLabel();
 
-    this.onLoadProgress = (value) => {
-      this.setProgress(value, 'Loading');
-    };
-    this.load.on('progress', this.onLoadProgress);
+    this.load.on('progress', (value) => {
+      this.setProgress(value);
+    });
 
-    if (!areSharedGameAssetsReady(this.textures)) {
-      queueSharedGameAssets(this.load, this.textures);
-    }
-
-    queuePetAssets(this.load, this.textures, this.pet, { includeRunFrames: true });
+    queueGameAssets(this.load, this.textures, { includeRunFrames: true, pet: this.pet });
   }
 
   create() {
@@ -74,31 +64,14 @@ export default class LoadingScene extends Phaser.Scene {
 
     this.anims.create({
       key: 'loading-run',
-      frames: Array.from({ length: this.petConfig.runFrameCount }, (_, i) => ({
-        key: this.petConfig.textureKeys.run(i),
-      })),
+      frames: Array.from({ length: this.petConfig.runFrameCount }, (_, i) => ({ key: `run_${i}` })),
       frameRate: 12,
       repeat: -1,
     });
 
     this.createPetPreview();
-    this.setProgress(1, 'Ready');
-    this.startTimer = this.time.delayedCall(READY_HOLD_MS, () => this.startGame());
-  }
-
-  shutdown() {
-    if (this.onLoadProgress) {
-      this.load.off('progress', this.onLoadProgress);
-      this.onLoadProgress = null;
-    }
-
-    this.startTimer?.remove(false);
-    this.startTimer = null;
-    this.loadingPet?.anims?.stop();
-
-    if (this.anims.exists('loading-run')) {
-      this.anims.remove('loading-run');
-    }
+    this.setProgress(1);
+    this.startGame();
   }
 
   createPetPreview() {
@@ -110,7 +83,7 @@ export default class LoadingScene extends Phaser.Scene {
       .setDepth(1);
 
     this.loadingPet = this.add
-      .sprite(sx(PET_X), sy(PET_Y), this.petConfig.textureKeys.run(0))
+      .sprite(sx(PET_X), sy(PET_Y), 'run_0')
       .setDisplaySize(petSize, petSize)
       .setDepth(2);
 
@@ -134,22 +107,26 @@ export default class LoadingScene extends Phaser.Scene {
     this.barTrack.fillStyle(0xffffff, 1);
     this.barTrack.fillRoundedRect(trackX, trackY, trackW, trackH, radius);
 
+    this.barMask = this.make.graphics({ add: false });
+    this.barMask.fillStyle(0xffffff, 1);
+    this.barMask.fillRoundedRect(innerX, innerY, innerW, innerH, innerRadius);
+
     this.barFill = this.add.graphics().setDepth(4);
+    this.barFill.setMask(this.barMask.createGeometryMask());
 
     this.barMetrics = {
       innerX,
       innerY,
       innerW,
       innerH,
-      innerRadius,
     };
 
-    this.setProgress(0, 'Loading');
+    this.setProgress(0);
   }
 
   createProgressLabel() {
     this.progressLabel = this.add
-      .text(WIDTH / 2, sy(BAR_Y) + sx(BAR_H) + sy(12), 'Loading 0%', {
+      .text(WIDTH / 2, sy(BAR_Y) + sx(BAR_H) + sy(12), '0%', {
         fontFamily: 'Arial, sans-serif',
         fontSize: `${Math.round(sy(16))}px`,
         color: '#ffffff',
@@ -160,18 +137,18 @@ export default class LoadingScene extends Phaser.Scene {
       .setDepth(5);
   }
 
-  setProgress(value, labelPrefix = 'Loading') {
+  setProgress(value) {
     const progress = Phaser.Math.Clamp(value, 0, 1);
-    const { innerX, innerY, innerW, innerH, innerRadius } = this.barMetrics;
+    const { innerX, innerY, innerW, innerH } = this.barMetrics;
     const fillW = innerW * progress;
 
     this.barFill.clear();
     if (fillW > 0) {
       this.barFill.fillStyle(BAR_FILL, 1);
-      this.barFill.fillRoundedRect(innerX, innerY, fillW, innerH, innerRadius);
+      this.barFill.fillRect(innerX, innerY, fillW, innerH);
     }
 
-    this.progressLabel?.setText(`${labelPrefix} ${Math.round(progress * 100)}%`);
+    this.progressLabel?.setText(`${Math.round(progress * 100)}%`);
   }
 
   startGame() {

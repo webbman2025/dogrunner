@@ -5,7 +5,7 @@ import {
   HK_WEATHER_EFFECTS,
   resolveHKWeatherEffect,
 } from '../services/hkWeather.js';
-import { queueGameAssets, areGameAssetsReady, startGameWithLoading } from './queueGameAssets.js';
+import { queueGameAssets, areGameAssetsReady } from './queueGameAssets.js';
 import {
   clearPauseMenuHandlers,
   hidePauseMenu,
@@ -289,7 +289,6 @@ const GHOST_DEPTH = -0.5;
 
 const COURSE_SEED = 0xd064755;
 const COURSE_SCHEDULE_VERSION = 12;
-const COURSE_INITIAL_CHUNK_SCORE = 25_000;
 const COURSE_CHUNK_SCORE = 100_000;
 const COURSE_CHUNK_MAX_MS = 2 * 60 * 60 * 1000;
 const COURSE_SCHEDULE_EXTEND_THRESHOLD = 200;
@@ -864,9 +863,7 @@ export default class GameScene extends Phaser.Scene {
     this.ghostRunSamples = [];
     this.resetGhostFadeState();
     this.ghostLastHearts = MAX_HEARTS;
-    this.time.delayedCall(0, () => {
-      this.assignCourseSchedule(this.speedMultiplier);
-    });
+    this.assignCourseSchedule(this.speedMultiplier);
     this.physics.resume();
   }
 
@@ -896,7 +893,7 @@ export default class GameScene extends Phaser.Scene {
   }
 
   createPetAnimations() {
-    const { runFrameCount, sleepFrames, textureKeys } = this.petConfig;
+    const { runFrameCount, sleepFrames } = this.petConfig;
 
     for (const key of ['run', 'jump_launch', 'dead']) {
       if (this.anims.exists(key)) {
@@ -904,8 +901,8 @@ export default class GameScene extends Phaser.Scene {
       }
     }
 
-    const runFrames = Array.from({ length: runFrameCount }, (_, i) => ({ key: textureKeys.run(i) }));
-    const sleepAnimFrames = sleepFrames.map((i) => ({ key: textureKeys.sleep(i) }));
+    const runFrames = Array.from({ length: runFrameCount }, (_, i) => ({ key: `run_${i}` }));
+    const sleepAnimFrames = sleepFrames.map((i) => ({ key: `sleep_${i}` }));
 
     this.anims.create({
       key: 'run',
@@ -916,7 +913,7 @@ export default class GameScene extends Phaser.Scene {
 
     this.anims.create({
       key: 'jump_launch',
-      frames: [{ key: textureKeys.jump(0) }],
+      frames: [{ key: 'jump_0' }],
       frameRate: 14,
       repeat: 0,
     });
@@ -927,30 +924,6 @@ export default class GameScene extends Phaser.Scene {
       frameRate: 8,
       repeat: -1,
     });
-  }
-
-  isJumpTextureKey(key) {
-    return typeof key === 'string' && key.includes('-jump_');
-  }
-
-  resolveGhostTexture(tex) {
-    if (!tex || tex.includes('-')) {
-      return tex ?? this.petConfig.textureKeys.run(0);
-    }
-
-    if (tex.startsWith('run_')) {
-      return this.petConfig.textureKeys.run(Number.parseInt(tex.slice(4), 10) || 0);
-    }
-
-    if (tex.startsWith('jump_')) {
-      return this.petConfig.textureKeys.jump(Number.parseInt(tex.slice(5), 10) || 0);
-    }
-
-    if (tex.startsWith('sleep_')) {
-      return this.petConfig.textureKeys.sleep(Number.parseInt(tex.slice(6), 10) || 0);
-    }
-
-    return this.petConfig.textureKeys.run(0);
   }
 
   setupDogPhysics() {
@@ -1175,7 +1148,7 @@ export default class GameScene extends Phaser.Scene {
     const pickup = this.snackPickups.create(
       SNACK_PICKUP_SPAWN_X,
       event.baseY,
-      this.petConfig.textureKeys.snack,
+      'pet-snack',
     );
     pickup.setOrigin(0.5, 0.5);
     const targetH = this.petConfig.snackDisplayHeight ?? SNACK_PICKUP_SIZE;
@@ -1291,7 +1264,7 @@ export default class GameScene extends Phaser.Scene {
 
   assignCourseSchedule(speedMultiplier) {
     this.courseBuilder = createCourseBuilder(speedMultiplier);
-    this.courseSchedule = this.courseBuilder.simulateUntilScore(COURSE_INITIAL_CHUNK_SCORE);
+    this.courseSchedule = this.courseBuilder.simulateUntilScore(COURSE_CHUNK_SCORE);
     this.courseSpawnIndex = 0;
     this.courseSpawnedIndices = new Set();
   }
@@ -1487,7 +1460,7 @@ export default class GameScene extends Phaser.Scene {
   }
 
   createGhostDog() {
-    this.ghostDog = this.add.sprite(DOG_X, DOG_RUN_GROUND_Y, this.petConfig.textureKeys.run(0));
+    this.ghostDog = this.add.sprite(DOG_X, DOG_RUN_GROUND_Y, 'run_0');
     this.ghostDog.setOrigin(0.5, 1);
     this.ghostDog.setScale(DOG_SCALE);
     this.ghostDog.setDepth(GHOST_DEPTH);
@@ -1665,19 +1638,18 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
-    const isJump = this.isJumpTextureKey(tex);
+    const isJump = tex?.startsWith('jump_');
 
     if (isJump) {
-      const resolvedTex = this.resolveGhostTexture(tex);
-      if (this.ghostDog.texture.key !== resolvedTex) {
-        this.ghostDog.setTexture(resolvedTex);
+      if (this.ghostDog.texture.key !== tex) {
+        this.ghostDog.setTexture(tex);
       }
       this.ghostDog.anims.stop();
       return;
     }
 
     if (
-      this.isJumpTextureKey(this.ghostDog.texture.key) ||
+      this.ghostDog.texture.key.startsWith('jump_') ||
       !this.ghostDog.anims.isPlaying ||
       this.ghostDog.anims.currentAnim?.key !== 'run'
     ) {
@@ -1736,9 +1708,7 @@ export default class GameScene extends Phaser.Scene {
 
     const ghostScore = this.getGhostHeldValueAt(samples, elapsed, 'score') ?? 0;
     const ghostY = this.getGhostValueAt(samples, elapsed, 'y') ?? DOG_RUN_GROUND_Y;
-    const ghostTex = this.resolveGhostTexture(
-      this.getGhostHeldValueAt(samples, elapsed, 'tex') ?? this.petConfig.textureKeys.run(0),
-    );
+    const ghostTex = this.getGhostHeldValueAt(samples, elapsed, 'tex') ?? 'run_0';
     const ghostRunScale = this.getGhostPlaybackRunScale(samples, elapsed);
     const delta = Math.floor(this.score) - ghostScore;
 
@@ -1795,7 +1765,7 @@ export default class GameScene extends Phaser.Scene {
       this.jumpPhase = null;
 
       if (
-        this.isJumpTextureKey(this.dog.texture.key) ||
+        this.dog.texture.key.startsWith('jump_') ||
         !this.dog.anims.isPlaying ||
         this.dog.anims.currentAnim?.key !== 'run'
       ) {
@@ -1804,12 +1774,11 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
     const holdingJump = rising && this.isJumpInputHeld();
-    const { textureKeys } = this.petConfig;
 
     if (!this.wasAirborne) {
       this.wasAirborne = true;
       this.jumpPhase = rising ? 'hold' : 'fall';
-      this.dog.setTexture(rising ? textureKeys.jump(1) : textureKeys.jump(2));
+      this.dog.setTexture(rising ? 'jump_1' : 'jump_2');
       this.dog.anims.stop();
       return;
     }
@@ -1821,11 +1790,11 @@ export default class GameScene extends Phaser.Scene {
 
       if (holdingJump) {
         this.jumpPhase = 'hold';
-        this.dog.setTexture(textureKeys.jump(1));
+        this.dog.setTexture('jump_1');
         this.dog.anims.stop();
       } else {
         this.jumpPhase = 'fall';
-        this.dog.setTexture(textureKeys.jump(2));
+        this.dog.setTexture('jump_2');
         this.dog.anims.stop();
       }
       return;
@@ -1833,21 +1802,21 @@ export default class GameScene extends Phaser.Scene {
 
     if (this.jumpPhase === 'hold') {
       if (holdingJump) {
-        if (this.dog.texture.key !== textureKeys.jump(1)) {
-          this.dog.setTexture(textureKeys.jump(1));
+        if (this.dog.texture.key !== 'jump_1') {
+          this.dog.setTexture('jump_1');
           this.dog.anims.stop();
         }
         return;
       }
 
       this.jumpPhase = 'fall';
-      this.dog.setTexture(textureKeys.jump(2));
+      this.dog.setTexture('jump_2');
       this.dog.anims.stop();
       return;
     }
 
-    if (this.jumpPhase === 'fall' && this.dog.texture.key !== textureKeys.jump(2)) {
-      this.dog.setTexture(textureKeys.jump(2));
+    if (this.jumpPhase === 'fall' && this.dog.texture.key !== 'jump_2') {
+      this.dog.setTexture('jump_2');
       this.dog.anims.stop();
     }
   }
@@ -2456,13 +2425,6 @@ export default class GameScene extends Phaser.Scene {
   shutdown() {
     this.releasePauseState();
     clearPauseMenuHandlers();
-    this.tweens.killAll();
-
-    for (const key of ['run', 'jump_launch', 'dead', 'loading-run']) {
-      if (this.anims.exists(key)) {
-        this.anims.remove(key);
-      }
-    }
 
     if (this.onPointerDown) {
       this.input.off('pointerdown', this.onPointerDown);
@@ -2471,21 +2433,6 @@ export default class GameScene extends Phaser.Scene {
     if (this.onPointerUp) {
       this.input.off('pointerup', this.onPointerUp);
     }
-  }
-
-  createCanvasTexture(key, draw) {
-    if (this.textures.exists(key)) {
-      this.textures.remove(key);
-    }
-
-    const canvas = this.textures.createCanvas(key, WIDTH, HEIGHT);
-    if (!canvas) {
-      return null;
-    }
-
-    draw(canvas.context, canvas);
-    canvas.refresh();
-    return canvas;
   }
 
   pauseAnimatedSprites() {
@@ -2602,7 +2549,7 @@ export default class GameScene extends Phaser.Scene {
     }
 
     this.releasePauseState();
-    startGameWithLoading(this, { ghostRace: this.ghostRaceEnabled, pet: this.pet });
+    this.scene.start('LoadingScene', { ghostRace: this.ghostRaceEnabled, pet: this.pet });
   }
 
   goHomeFromPause() {
@@ -2612,7 +2559,7 @@ export default class GameScene extends Phaser.Scene {
 
   retryFromGameOver() {
     hideGameOverMenu();
-    startGameWithLoading(this, { ghostRace: this.ghostRaceEnabled, pet: this.pet });
+    this.scene.start('LoadingScene', { ghostRace: this.ghostRaceEnabled, pet: this.pet });
   }
 
   goHomeFromGameOver() {
@@ -2630,16 +2577,20 @@ export default class GameScene extends Phaser.Scene {
   }
 
   createDayAtmosphere() {
-    this.createCanvasTexture('night-gradient', (ctx, canvas) => {
-      const gradient = ctx.createLinearGradient(0, 0, 0, HEIGHT);
-      gradient.addColorStop(0, 'rgba(2, 4, 18, 100)');
-      gradient.addColorStop(0.4, 'rgba(4, 8, 28, 0.80)');
-      gradient.addColorStop(0.7, 'rgba(8, 12, 36, 0.70)');
-      gradient.addColorStop(1, 'rgba(12, 16, 40, 0.42)');
-      ctx.fillStyle = gradient;
-      ctx.fillRect(0, 0, WIDTH, HEIGHT);
-      canvas.refresh();
-    });
+    if (!this.textures.exists('night-gradient')) {
+      const canvas = this.textures.createCanvas('night-gradient', WIDTH, HEIGHT);
+      if (canvas) {
+        const ctx = canvas.context;
+        const gradient = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+        gradient.addColorStop(0, 'rgba(2, 4, 18, 100)');
+        gradient.addColorStop(0.4, 'rgba(4, 8, 28, 0.80)');
+        gradient.addColorStop(0.7, 'rgba(8, 12, 36, 0.70)');
+        gradient.addColorStop(1, 'rgba(12, 16, 40, 0.42)');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, WIDTH, HEIGHT);
+        canvas.refresh();
+      }
+    }
 
     this.dayOverlay = this.add.image(WIDTH / 2, HEIGHT / 2, 'night-gradient');
     this.dayOverlay.setScrollFactor(0);
@@ -2650,16 +2601,22 @@ export default class GameScene extends Phaser.Scene {
   }
 
   createStormAtmosphere() {
-    this.createCanvasTexture('storm-gradient', (ctx, canvas) => {
-      const gradient = ctx.createLinearGradient(0, 0, 0, HEIGHT);
-      gradient.addColorStop(0, 'rgba(6, 10, 24, 0.72)');
-      gradient.addColorStop(0.45, 'rgba(10, 16, 34, 0.48)');
-      gradient.addColorStop(0.72, 'rgba(16, 22, 40, 0.28)');
-      gradient.addColorStop(1, 'rgba(24, 30, 48, 0.12)');
-      ctx.fillStyle = gradient;
-      ctx.fillRect(0, 0, WIDTH, HEIGHT);
-      canvas.refresh();
-    });
+    if (!this.textures.exists('storm-gradient')) {
+      const canvas = this.textures.createCanvas('storm-gradient', WIDTH, HEIGHT);
+      if (!canvas) {
+        console.warn('storm-gradient texture already exists');
+      } else {
+        const ctx = canvas.context;
+        const gradient = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+        gradient.addColorStop(0, 'rgba(6, 10, 24, 0.72)');
+        gradient.addColorStop(0.45, 'rgba(10, 16, 34, 0.48)');
+        gradient.addColorStop(0.72, 'rgba(16, 22, 40, 0.28)');
+        gradient.addColorStop(1, 'rgba(24, 30, 48, 0.12)');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, WIDTH, HEIGHT);
+        canvas.refresh();
+      }
+    }
 
     this.stormOverlay = this.add.image(WIDTH / 2, HEIGHT / 2, 'storm-gradient');
     this.stormOverlay.setScrollFactor(0);
@@ -2931,11 +2888,7 @@ export default class GameScene extends Phaser.Scene {
 
     this.createDogShadow();
 
-    this.dog = this.physics.add.sprite(
-      DOG_X,
-      GROUND_SURFACE + DOG_Y_OFFSET,
-      this.petConfig.textureKeys.run(0),
-    );
+    this.dog = this.physics.add.sprite(DOG_X, GROUND_SURFACE + DOG_Y_OFFSET, 'run_0');
     this.dog.setDepth(0);
     this.dog.setOrigin(0.5, 1);
     this.dog.setScale(DOG_SCALE);
@@ -3211,7 +3164,7 @@ export default class GameScene extends Phaser.Scene {
     this.jumpPhase = 'hold';
     this.dog.setVelocityY(MIN_JUMP_VELOCITY);
     this.dog.setGravityY(GRAVITY_HOLD_RISE);
-    this.dog.setTexture(this.petConfig.textureKeys.jump(1));
+    this.dog.setTexture('jump_1');
     this.dog.anims.stop();
     return true;
   }
