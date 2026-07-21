@@ -24,6 +24,9 @@ export function queueGameAssets(
   image('obstacle', 'assets/rock.png');
   image('obstacle-cone', 'assets/ui/cone.png');
   image('obstacle-bush', 'assets/ui/bush.png');
+  image('obstacle-2-cones', 'assets/ui/2_cones.png');
+  image('obstacle-medium-bush', 'assets/ui/medium_bush.png');
+  image('obstacle-big-bush', 'assets/ui/big_bush.png');
   image('mud', 'assets/mud.png');
 
   if (includeRunFrames) {

@@ -88,18 +88,35 @@ const INVINCIBLE_RAINBOW_COLORS = [
 ];
 const INVINCIBLE_RAINBOW_STEP_MS = 48;
 const INVINCIBLE_COLLECT_FLASH_MS = 120;
-const OBSTACLE_TEXTURE_KEYS = ['obstacle', 'obstacle-cone', 'obstacle-bush'];
-const OBSTACLE_VARIANT_COUNT = OBSTACLE_TEXTURE_KEYS.length;
+const OBSTACLE_ADVANCED_SCORE = 5000;
+const OBSTACLE_EARLY_TEXTURE_KEYS = ['obstacle', 'obstacle-cone', 'obstacle-bush'];
+const OBSTACLE_LATE_TEXTURE_KEYS = [
+  'obstacle-2-cones',
+  'obstacle-medium-bush',
+  'obstacle-big-bush',
+];
 const OBSTACLE_NATIVE_SIZE = {
   obstacle: { w: 126, h: 120 },
   'obstacle-cone': { w: 260, h: 212 },
   'obstacle-bush': { w: 418, h: 268 },
+  'obstacle-2-cones': { w: 520, h: 212 },
+  'obstacle-medium-bush': { w: 726, h: 402 },
+  'obstacle-big-bush': { w: 1034, h: 510 },
 };
 const OBSTACLE_TARGET_HEIGHT = {
   obstacle: OBSTACLE_DISPLAY_H,
   'obstacle-cone': 58,
   'obstacle-bush': 64,
+  'obstacle-2-cones': 58,
+  'obstacle-medium-bush': 62,
+  'obstacle-big-bush': 72,
 };
+
+function getObstacleTextureKeysForScore(score) {
+  return score >= OBSTACLE_ADVANCED_SCORE
+    ? OBSTACLE_LATE_TEXTURE_KEYS
+    : OBSTACLE_EARLY_TEXTURE_KEYS;
+}
 
 function displaySizeFromNative(nativeW, nativeH, targetH) {
   return {
@@ -114,9 +131,9 @@ function getObstacleDisplaySize(textureKey) {
   return displaySizeFromNative(native.w, native.h, targetH);
 }
 
-function getObstacleDisplaySizeForVariant(variantIndex) {
-  const textureKey =
-    OBSTACLE_TEXTURE_KEYS[variantIndex ?? 0] ?? OBSTACLE_TEXTURE_KEYS[0];
+function getObstacleDisplaySizeForVariant(variantIndex, score = 0) {
+  const pool = getObstacleTextureKeysForScore(score);
+  const textureKey = pool[variantIndex ?? 0] ?? pool[0];
   return getObstacleDisplaySize(textureKey);
 }
 const COYOTE_MS = 130;
@@ -251,6 +268,14 @@ const WEATHER_MODES = {
   STORM: 'storm',
 };
 
+const WEATHER_CHANGE_INTERVAL = 1000;
+const WEATHER_RANDOM_WEIGHTS = [
+  { mode: WEATHER_MODES.DRY, weight: 50 },
+  { mode: WEATHER_MODES.RAIN, weight: 35 },
+  { mode: WEATHER_MODES.STORM, weight: 15 },
+];
+const WEATHER_STORM_NIGHT_WEIGHT = 25;
+
 const DAY_MODES = {
   DAY: 'day',
   NIGHT: 'night',
@@ -288,7 +313,7 @@ const GHOST_X_MAX = 160;
 const GHOST_DEPTH = -0.5;
 
 const COURSE_SEED = 0xd064755;
-const COURSE_SCHEDULE_VERSION = 10;
+const COURSE_SCHEDULE_VERSION = 14;
 const COURSE_MAX_MS = 10 * 60 * 1000;
 
 function createSeededRng(seed) {
@@ -427,11 +452,12 @@ function buildCourseSchedule(speedMultiplier) {
 
     if (rockTimer <= 0) {
       const activeMud = pruneSimHazards(muds, state.t, speedMultiplier);
-      let variant = rng.between(0, OBSTACLE_VARIANT_COUNT - 1);
+      const obstaclePool = getObstacleTextureKeysForScore(state.score);
+      let variant = rng.between(0, obstaclePool.length - 1);
       if (variant === lastRockVariant) {
-        variant = (variant + 1) % OBSTACLE_VARIANT_COUNT;
+        variant = (variant + 1) % obstaclePool.length;
       }
-      const rockDisplay = getObstacleDisplaySizeForVariant(variant);
+      const rockDisplay = getObstacleDisplaySizeForVariant(variant, state.score);
 
       if (
         isSimHazardTooClose(
@@ -511,6 +537,28 @@ function resetCourseScheduleRuntimeState(schedule) {
   for (const event of schedule) {
     delete event.spawned;
   }
+}
+
+function pickWeightedWeatherMode(rng, weights, previousMode = null) {
+  let pool = weights;
+  if (previousMode) {
+    const filtered = weights.filter((entry) => entry.mode !== previousMode);
+    if (filtered.length > 0) {
+      pool = filtered;
+    }
+  }
+
+  const total = pool.reduce((sum, entry) => sum + entry.weight, 0);
+  let roll = rng.between(0, total - 1);
+
+  for (const entry of pool) {
+    if (roll < entry.weight) {
+      return entry.mode;
+    }
+    roll -= entry.weight;
+  }
+
+  return pool[0].mode;
 }
 
 export default class GameScene extends Phaser.Scene {
@@ -636,6 +684,8 @@ export default class GameScene extends Phaser.Scene {
       this.passedDistanceMilestoneIndex = milestoneIndex;
       this.triggerDistanceMilestoneEffect();
     }
+
+    this.updateRandomWeather(displayScore);
   }
 
   triggerDistanceMilestoneEffect() {
@@ -1178,13 +1228,13 @@ export default class GameScene extends Phaser.Scene {
     return this.snackPickups?.countActive(true) ?? 0;
   }
 
-  trySpawnCourseEvent(event, elapsed) {
+  trySpawnCourseEvent(event, elapsed, eventTime = event.t) {
     if (event.type === 'rock') {
-      return this.spawnRockAt(event, elapsed);
+      return this.spawnRockAt(event, elapsed, eventTime);
     }
 
     if (event.type === 'mud') {
-      return this.spawnMudAt(event, elapsed);
+      return this.spawnMudAt(event, elapsed, eventTime);
     }
 
     if (event.type === 'heart') {
@@ -1201,16 +1251,27 @@ export default class GameScene extends Phaser.Scene {
   }
 
   processCourseSpawns(elapsed) {
+    const cycleMs = this.courseCycleMs;
+    const cycleIndex = Math.floor(elapsed / cycleMs);
+
+    if (cycleIndex !== this.courseSpawnCycleIndex) {
+      this.courseSpawnCycleIndex = cycleIndex;
+      this.courseSpawnIndex = 0;
+      this.courseSpawnedIndices = new Set();
+    }
+
+    const cycleElapsed = elapsed - cycleIndex * cycleMs;
     let i = this.courseSpawnIndex;
     let hazardsSpawnedThisFrame = 0;
 
-    while (i < this.courseSchedule.length && this.courseSchedule[i].t <= elapsed) {
+    while (i < this.courseSchedule.length && this.courseSchedule[i].t <= cycleElapsed) {
       if (this.courseSpawnedIndices.has(i)) {
         i++;
         continue;
       }
 
       const event = this.courseSchedule[i];
+      const eventTime = event.t + cycleIndex * cycleMs;
 
       if (
         event.type === 'heart' &&
@@ -1235,7 +1296,7 @@ export default class GameScene extends Phaser.Scene {
         break;
       }
 
-      if (!this.trySpawnCourseEvent(event, elapsed)) {
+      if (!this.trySpawnCourseEvent(event, elapsed, eventTime)) {
         break;
       }
 
@@ -1253,6 +1314,8 @@ export default class GameScene extends Phaser.Scene {
   assignCourseSchedule(speedMultiplier) {
     this.courseSchedule = getCourseSchedule(speedMultiplier);
     resetCourseScheduleRuntimeState(this.courseSchedule);
+    this.courseCycleMs = COURSE_MAX_MS;
+    this.courseSpawnCycleIndex = 0;
     this.courseSpawnIndex = 0;
     this.courseSpawnedIndices = new Set();
   }
@@ -1850,6 +1913,68 @@ export default class GameScene extends Phaser.Scene {
     }
 
     this.refreshDevMenu();
+  }
+
+  getRandomWeatherWeights() {
+    const isNight =
+      (this.dayOverlayBlend ?? this.getDayOverlayAlphaFromScore(this.score ?? 0)) >= 0.5;
+
+    return WEATHER_RANDOM_WEIGHTS.map(({ mode, weight }) => ({
+      mode,
+      weight:
+        mode === WEATHER_MODES.STORM && isNight ? WEATHER_STORM_NIGHT_WEIGHT : weight,
+    }));
+  }
+
+  pickRandomWeatherMode(previousMode = null) {
+    return pickWeightedWeatherMode(
+      this.weatherRng,
+      this.getRandomWeatherWeights(),
+      previousMode,
+    );
+  }
+
+  applyRandomWeatherChange(mode) {
+    switch (mode) {
+      case WEATHER_MODES.STORM:
+        this.liveSkyColor = '#3a4455';
+        this.windIntensity = 0.85;
+        break;
+      case WEATHER_MODES.RAIN:
+        this.liveSkyColor = '#6b8fa3';
+        this.windIntensity = 0.2;
+        break;
+      default:
+        this.liveSkyColor = '#87ceeb';
+        this.windIntensity = 0;
+        break;
+    }
+
+    this.setWeatherMode(mode, { manual: false });
+  }
+
+  updateRandomWeather(displayScore) {
+    if (this.weatherManualOverride || GameScene.devHKWeather === 'on') {
+      return;
+    }
+
+    const milestoneIndex = Math.floor(displayScore / WEATHER_CHANGE_INTERVAL);
+    if (milestoneIndex <= this.passedWeatherMilestoneIndex) {
+      return;
+    }
+
+    this.passedWeatherMilestoneIndex = milestoneIndex;
+    const previousMode = milestoneIndex === 0 ? null : GameScene.devWeather;
+    this.applyRandomWeatherChange(this.pickRandomWeatherMode(previousMode));
+  }
+
+  initRandomWeatherForRun() {
+    this.passedWeatherMilestoneIndex = -1;
+    this.weatherRng = createSeededRng(COURSE_SEED ^ 0x9e3779b9);
+    this.weatherManualOverride = false;
+    this.liveSkyColor = '#87ceeb';
+    this.liveWeatherLabel = null;
+    this.windIntensity = 0;
   }
 
   setWeatherMode(mode, { manual = true } = {}) {
@@ -2826,11 +2951,8 @@ export default class GameScene extends Phaser.Scene {
     this.coyoteMs = 0;
     this.wasAirborne = false;
     this.jumpPhase = null;
-    this.weatherManualOverride = true;
+    this.initRandomWeatherForRun();
     GameScene.devWeather = WEATHER_MODES.DRY;
-    this.windIntensity = 0;
-    this.liveSkyColor = '#87ceeb';
-    this.liveWeatherLabel = null;
 
     if (typeof this.launchGhostRace === 'boolean') {
       this.ghostRaceEnabled = this.launchGhostRace;
@@ -2865,6 +2987,8 @@ export default class GameScene extends Phaser.Scene {
       this.weatherManualOverride = false;
       this.applyClockDayMode();
       this.fetchAndApplyHKWeather();
+    } else {
+      this.updateRandomWeather(0);
     }
 
     this.physics.world.setBounds(0, 0, WIDTH, HEIGHT);
@@ -3087,11 +3211,11 @@ export default class GameScene extends Phaser.Scene {
     this.dog.setGravityY(rising ? GRAVITY_RISE : GRAVITY_FALL);
   }
 
-  spawnRockAt(event, elapsed) {
-    const textureKey =
-      OBSTACLE_TEXTURE_KEYS[event.variant ?? 0] ?? OBSTACLE_TEXTURE_KEYS[0];
+  spawnRockAt(event, elapsed, eventTime = event.t) {
+    const obstaclePool = getObstacleTextureKeysForScore(this.score);
+    const textureKey = obstaclePool[event.variant ?? 0] ?? obstaclePool[0];
     const display = getObstacleDisplaySize(textureKey);
-    const spawnX = this.getHazardSpawnX(event.t, elapsed);
+    const spawnX = this.getHazardSpawnX(eventTime, elapsed);
     if (spawnX < -display.w) {
       return true;
     }
@@ -3115,8 +3239,8 @@ export default class GameScene extends Phaser.Scene {
     return true;
   }
 
-  spawnMudAt(event, elapsed) {
-    const spawnX = this.getHazardSpawnX(event.t, elapsed);
+  spawnMudAt(event, elapsed, eventTime = event.t) {
+    const spawnX = this.getHazardSpawnX(eventTime, elapsed);
     if (spawnX < -MUD_DISPLAY_W) {
       return true;
     }
