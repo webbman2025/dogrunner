@@ -288,10 +288,8 @@ const GHOST_X_MAX = 160;
 const GHOST_DEPTH = -0.5;
 
 const COURSE_SEED = 0xd064755;
-const COURSE_SCHEDULE_VERSION = 12;
-const COURSE_CHUNK_SCORE = 100_000;
-const COURSE_CHUNK_MAX_MS = 2 * 60 * 60 * 1000;
-const COURSE_SCHEDULE_EXTEND_THRESHOLD = 200;
+const COURSE_SCHEDULE_VERSION = 10;
+const COURSE_MAX_MS = 10 * 60 * 1000;
 
 function createSeededRng(seed) {
   let state = seed >>> 0;
@@ -361,11 +359,13 @@ function bumpPickupScoreTarget(target, oppositeLastScore) {
   return oppositeLastScore + PICKUP_MIN_SCORE_SEPARATION;
 }
 
-function createCourseBuilder(speedMultiplier) {
+function buildCourseSchedule(speedMultiplier) {
   const rng = createSeededRng(COURSE_SEED);
+  const events = [];
   const rocks = [];
   const muds = [];
   const state = { t: 0, score: 0 };
+
   let rockTimer = rng.between(ROCK_SPAWN_INITIAL_MIN_MS, ROCK_SPAWN_INITIAL_MAX_MS);
   let mudTimer = rng.between(3500, 5500);
   let heartScoreTarget = rng.between(
@@ -380,128 +380,137 @@ function createCourseBuilder(speedMultiplier) {
   );
   let lastRockVariant = -1;
 
-  return {
-    state,
-    simulateUntilScore(targetScore) {
-      const events = [];
-      const chunkStartT = state.t;
+  while (state.t < COURSE_MAX_MS) {
+    const step = Math.max(1, Math.min(rockTimer, mudTimer, 50));
+    const dt = step / 1000;
+    const spd = scrollSpeedAtScore(state.score, speedMultiplier);
+    state.score += spd * dt * 0.1;
+    state.t += step;
+    rockTimer -= step;
+    mudTimer -= step;
 
-      while (state.score < targetScore && state.t - chunkStartT < COURSE_CHUNK_MAX_MS) {
-        const step = Math.max(1, Math.min(rockTimer, mudTimer, 50));
-        const dt = step / 1000;
-        const spd = scrollSpeedAtScore(state.score, speedMultiplier);
-        state.score += spd * dt * 0.1;
-        state.t += step;
-        rockTimer -= step;
-        mudTimer -= step;
-
-        while (state.score >= heartScoreTarget) {
-          heartScoreTarget = bumpPickupScoreTarget(heartScoreTarget, lastSnackScore);
-          if (state.score < heartScoreTarget) {
-            break;
-          }
-
-          events.push({
-            type: 'heart',
-            t: state.t,
-            baseY: rng.between(HEART_PICKUP_Y_MIN, HEART_PICKUP_Y_MAX),
-          });
-          lastHeartScore = heartScoreTarget;
-          heartScoreTarget += rng.between(
-            HEART_PICKUP_SPAWN_MIN_SCORE,
-            HEART_PICKUP_SPAWN_MAX_SCORE,
-          );
-        }
-
-        while (state.score >= snackScoreTarget) {
-          snackScoreTarget = bumpPickupScoreTarget(snackScoreTarget, lastHeartScore);
-          if (state.score < snackScoreTarget) {
-            break;
-          }
-
-          events.push({
-            type: 'snack',
-            t: state.t,
-            baseY: rng.between(HEART_PICKUP_Y_MIN, HEART_PICKUP_Y_MAX),
-          });
-          lastSnackScore = snackScoreTarget;
-          snackScoreTarget += rng.between(
-            SNACK_PICKUP_SPAWN_MIN_SCORE,
-            SNACK_PICKUP_SPAWN_MAX_SCORE,
-          );
-        }
-
-        if (rockTimer <= 0) {
-          const activeMud = pruneSimHazards(muds, state.t, speedMultiplier);
-          let variant = rng.between(0, OBSTACLE_VARIANT_COUNT - 1);
-          if (variant === lastRockVariant) {
-            variant = (variant + 1) % OBSTACLE_VARIANT_COUNT;
-          }
-          const rockDisplay = getObstacleDisplaySizeForVariant(variant);
-
-          if (
-            isSimHazardTooClose(
-              HAZARD_SPAWN_X,
-              rockDisplay.w / 2,
-              activeMud,
-              state.t,
-              speedMultiplier,
-            )
-          ) {
-            rockTimer = HAZARD_RETRY_MS;
-          } else {
-            lastRockVariant = variant;
-
-            events.push({ type: 'rock', t: state.t, variant });
-            rocks.push({
-              spawnT: state.t,
-              spawnX: HAZARD_SPAWN_X,
-              halfWidth: rockDisplay.w / 2,
-              scoreAtSpawn: state.score,
-            });
-            const minGap = Phaser.Math.Clamp(
-              ROCK_SPAWN_MIN_MS - state.score,
-              ROCK_SPAWN_MIN_FLOOR_MS,
-              ROCK_SPAWN_MIN_MS,
-            );
-            const maxGap = Phaser.Math.Clamp(
-              ROCK_SPAWN_MAX_MS - state.score,
-              ROCK_SPAWN_MAX_FLOOR_MS,
-              ROCK_SPAWN_MAX_MS,
-            );
-            rockTimer = rng.between(minGap, maxGap);
-          }
-        }
-
-        if (mudTimer <= 0) {
-          const activeRocks = pruneSimHazards(rocks, state.t, speedMultiplier);
-          if (
-            isSimHazardTooClose(
-              HAZARD_SPAWN_X,
-              MUD_DISPLAY_W / 2,
-              activeRocks,
-              state.t,
-              speedMultiplier,
-            )
-          ) {
-            mudTimer = HAZARD_RETRY_MS;
-          } else {
-            events.push({ type: 'mud', t: state.t });
-            muds.push({
-              spawnT: state.t,
-              spawnX: HAZARD_SPAWN_X,
-              halfWidth: MUD_DISPLAY_W / 2,
-              scoreAtSpawn: state.score,
-            });
-            mudTimer = rng.between(MUD_SPAWN_MIN_MS, MUD_SPAWN_MAX_MS);
-          }
-        }
+    while (state.score >= heartScoreTarget) {
+      heartScoreTarget = bumpPickupScoreTarget(heartScoreTarget, lastSnackScore);
+      if (state.score < heartScoreTarget) {
+        break;
       }
 
-      events.sort((a, b) => a.t - b.t);
-      return events;
-    },
-  };
+      events.push({
+        type: 'heart',
+        t: state.t,
+        baseY: rng.between(HEART_PICKUP_Y_MIN, HEART_PICKUP_Y_MAX),
+      });
+      lastHeartScore = heartScoreTarget;
+      heartScoreTarget += rng.between(
+        HEART_PICKUP_SPAWN_MIN_SCORE,
+        HEART_PICKUP_SPAWN_MAX_SCORE,
+      );
+    }
+
+    while (state.score >= snackScoreTarget) {
+      snackScoreTarget = bumpPickupScoreTarget(snackScoreTarget, lastHeartScore);
+      if (state.score < snackScoreTarget) {
+        break;
+      }
+
+      events.push({
+        type: 'snack',
+        t: state.t,
+        baseY: rng.between(HEART_PICKUP_Y_MIN, HEART_PICKUP_Y_MAX),
+      });
+      lastSnackScore = snackScoreTarget;
+      snackScoreTarget += rng.between(
+        SNACK_PICKUP_SPAWN_MIN_SCORE,
+        SNACK_PICKUP_SPAWN_MAX_SCORE,
+      );
+    }
+
+    if (rockTimer <= 0) {
+      const activeMud = pruneSimHazards(muds, state.t, speedMultiplier);
+      let variant = rng.between(0, OBSTACLE_VARIANT_COUNT - 1);
+      if (variant === lastRockVariant) {
+        variant = (variant + 1) % OBSTACLE_VARIANT_COUNT;
+      }
+      const rockDisplay = getObstacleDisplaySizeForVariant(variant);
+
+      if (
+        isSimHazardTooClose(
+          HAZARD_SPAWN_X,
+          rockDisplay.w / 2,
+          activeMud,
+          state.t,
+          speedMultiplier,
+        )
+      ) {
+        rockTimer = HAZARD_RETRY_MS;
+      } else {
+        lastRockVariant = variant;
+
+        events.push({ type: 'rock', t: state.t, variant });
+        rocks.push({
+          spawnT: state.t,
+          spawnX: HAZARD_SPAWN_X,
+          halfWidth: rockDisplay.w / 2,
+          scoreAtSpawn: state.score,
+        });
+        const minGap = Phaser.Math.Clamp(
+          ROCK_SPAWN_MIN_MS - state.score,
+          ROCK_SPAWN_MIN_FLOOR_MS,
+          ROCK_SPAWN_MIN_MS,
+        );
+        const maxGap = Phaser.Math.Clamp(
+          ROCK_SPAWN_MAX_MS - state.score,
+          ROCK_SPAWN_MAX_FLOOR_MS,
+          ROCK_SPAWN_MAX_MS,
+        );
+        rockTimer = rng.between(minGap, maxGap);
+      }
+    }
+
+    if (mudTimer <= 0) {
+      const activeRocks = pruneSimHazards(rocks, state.t, speedMultiplier);
+      if (
+        isSimHazardTooClose(
+          HAZARD_SPAWN_X,
+          MUD_DISPLAY_W / 2,
+          activeRocks,
+          state.t,
+          speedMultiplier,
+        )
+      ) {
+        mudTimer = HAZARD_RETRY_MS;
+      } else {
+        events.push({ type: 'mud', t: state.t });
+        muds.push({
+          spawnT: state.t,
+          spawnX: HAZARD_SPAWN_X,
+          halfWidth: MUD_DISPLAY_W / 2,
+          scoreAtSpawn: state.score,
+        });
+        mudTimer = rng.between(MUD_SPAWN_MIN_MS, MUD_SPAWN_MAX_MS);
+      }
+    }
+  }
+
+  events.sort((a, b) => a.t - b.t);
+  return events;
+}
+
+const courseScheduleCache = new Map();
+
+function getCourseSchedule(speedMultiplier) {
+  const cacheKey = `${COURSE_SCHEDULE_VERSION}:${speedMultiplier}`;
+  if (!courseScheduleCache.has(cacheKey)) {
+    courseScheduleCache.set(cacheKey, buildCourseSchedule(speedMultiplier));
+  }
+
+  return courseScheduleCache.get(cacheKey);
+}
+
+function resetCourseScheduleRuntimeState(schedule) {
+  for (const event of schedule) {
+    delete event.spawned;
+  }
 }
 
 export default class GameScene extends Phaser.Scene {
@@ -1191,28 +1200,7 @@ export default class GameScene extends Phaser.Scene {
     return true;
   }
 
-  extendCourseScheduleIfNeeded() {
-    if (!this.courseBuilder) {
-      return;
-    }
-
-    const remaining = this.courseSchedule.length - this.courseSpawnIndex;
-    if (remaining > COURSE_SCHEDULE_EXTEND_THRESHOLD) {
-      return;
-    }
-
-    const targetScore = this.courseBuilder.state.score + COURSE_CHUNK_SCORE;
-    const chunk = this.courseBuilder.simulateUntilScore(targetScore);
-    if (!chunk.length) {
-      return;
-    }
-
-    this.courseSchedule.push(...chunk);
-  }
-
   processCourseSpawns(elapsed) {
-    this.extendCourseScheduleIfNeeded();
-
     let i = this.courseSpawnIndex;
     let hazardsSpawnedThisFrame = 0;
 
@@ -1263,8 +1251,8 @@ export default class GameScene extends Phaser.Scene {
   }
 
   assignCourseSchedule(speedMultiplier) {
-    this.courseBuilder = createCourseBuilder(speedMultiplier);
-    this.courseSchedule = this.courseBuilder.simulateUntilScore(COURSE_CHUNK_SCORE);
+    this.courseSchedule = getCourseSchedule(speedMultiplier);
+    resetCourseScheduleRuntimeState(this.courseSchedule);
     this.courseSpawnIndex = 0;
     this.courseSpawnedIndices = new Set();
   }
